@@ -511,6 +511,10 @@
       <div class="panel help" style="margin-top:16px"><h3>Change username / password</h3>
         <div class="bar"><input id="nu" placeholder="Username" autocomplete="username"><input id="np" type="password" placeholder="New password (12+ chars)" autocomplete="new-password"><button class="btn small" id="pw-save">Change</button></div>
         <div class="err" id="pw-msg"></div></div>
+      <div class="panel help" style="margin-top:16px"><h3>Import your Excel workbook</h3>
+        <p class="muted small">${S.vault.orders.length} orders are in the portal now. Importing reads your .xlsx in this browser (it is not uploaded) and <b>replaces</b> the orders and reference sheets.</p>
+        <div class="bar"><input id="imp-file" type="file" accept=".xlsx,.xls"><button class="btn small" id="imp-go">Import</button></div>
+        <div class="err" id="imp-msg" role="status"></div></div>
       <div class="panel help" style="margin-top:16px"><h3>Backup</h3>
         <p class="muted small">Download an encrypted copy of everything (needs your login to open).</p>
         <button class="btn ghost small" id="backup">Download encrypted backup</button></div>`;
@@ -546,6 +550,19 @@
       S.salt = crypto.getRandomValues(new Uint8Array(16));
       S.key = await derive(u, p, S.salt, S.iter);
       touch(); $('#pw-msg').textContent = 'Changed. Use the new login next time.'; $('#np').value = '';
+      return;
+    }
+    if (t.id === 'imp-go') {
+      const f = $('#imp-file').files[0], msg = $('#imp-msg');
+      if (!f) { msg.textContent = 'Choose your .xlsx file first.'; return; }
+      if (S.vault.orders.length && !confirm(`Replace the ${S.vault.orders.length} orders in the portal with the workbook's orders? Edits you made here will be lost.`)) return;
+      msg.textContent = 'Importing…';
+      try {
+        const d = await importWorkbook(f);
+        S.vault.orders = d.orders; S.vault.ref = d.ref; touch();
+        msg.className = 'ok'; msg.textContent = `Imported ${d.orders.length} orders.`;
+        setTimeout(render, 1200);
+      } catch (ex) { msg.className = 'err'; msg.textContent = 'Import failed: ' + (ex.message || ex); }
       return;
     }
     if (t.id === 'backup') {
