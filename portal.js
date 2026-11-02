@@ -350,7 +350,7 @@
 
   function exportCsv() {
     const list = filtered().sort(SORTS[S.sort] || SORTS.newest);
-    const cols = FIELDS.filter((f) => f[0][0] !== '#');
+    const cols = FIELDS.filter((f) => f[0][0] !== '#' && f[0][0] !== '@');
     const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const csv = [cols.map((c) => q(c[1])).join(','), ...list.map((o) => cols.map((c) => q(o[c[0]])).join(','))].join('\r\n');
     const a = document.createElement('a');
@@ -374,6 +374,7 @@
     ['amtDue', 'Amount due ($)', 'number', { step: '0.01' }],
     ['#', 'Payment'],
     ['paid', 'Amount paid ($)', 'number', { step: '0.01' }], ['method', 'Payment method', 'text', { list: 'methods' }],
+    ['@pay', '', 'pay'],
     ['#', 'Details'],
     ['colors', 'Special colors', 'text'], ['allergies', 'Allergies', 'text'],
     ['notes', 'Notes', 'textarea', { wide: 1 }],
@@ -398,6 +399,7 @@
     const dlg = $('#dlg');
     const fld = ([k, label, type, x = {}]) => {
       if (k === '#') return `<h3 class="fh">${label}</h3>`;
+      if (k === '@pay') return '<div class="paybox wide" id="paybox"></div>';
       const v = o[k] ?? '';
       const cls = x.wide ? ' class="wide"' : '';
       if (type === 'select') return `<label${cls}>${label}<select name="${k}">${x.opts.map((s) => `<option${s === v ? ' selected' : ''}>${s}</option>`).join('')}</select></label>`;
@@ -412,7 +414,6 @@
       <div class="actions">
         <button type="button" class="btn ghost small" id="b-calc">Calculate total</button>
         <button type="button" class="btn ghost small" id="b-rush">Add rush fee</button>
-        <button type="button" class="btn ghost small" id="b-paid">Mark paid in full</button>
       </div>
       <div class="calc" id="calc"></div>
       <div class="actions">
@@ -425,7 +426,7 @@
     const read = () => {
       const out = {};
       for (const [k, , type] of FIELDS) {
-        if (k === '#') continue;
+        if (k === '#' || k === '@pay') continue;
         const v = ef.elements[k].value;
         out[k] = type === 'number' ? (v === '' ? null : +v) : v.trim();
       }
@@ -442,7 +443,33 @@
       ef.elements.rush.value = Math.ceil(num(ef.elements.qty.value) / 12) * (p.rushPerDozen ?? 5);
       showCalc();
     };
-    $('#b-paid').onclick = () => { ef.elements.paid.value = ef.elements.amtDue.value; };
+    let prevPaid = ef.elements.paid.value;
+    const payBox = () => {
+      const due = num(ef.elements.amtDue.value), paid = num(ef.elements.paid.value), bal = Math.round((due - paid) * 100) / 100;
+      const full = due > 0 && bal <= 0.005;
+      $('#paybox').innerHTML = `<div class="paysum">
+          <span>Due <b>${money(due)}</b></span><span>Paid <b>${money(paid)}</b></span>
+          <span>Balance <b class="${full ? 'ok' : bal > 0 ? 'neg' : ''}">${full ? '✓ none' : money(Math.max(bal, 0))}</b></span></div>
+        <div class="payact">${full
+          ? '<span class="pill paidfull">✓ Paid in full</span> <button type="button" class="btn ghost small" id="b-unpay">Undo</button>'
+          : '<button type="button" class="btn" id="b-payfull">Paid in full</button>'}<span class="muted small" id="pay-msg"></span></div>`;
+    };
+    const applyPaid = (v) => {
+      ef.elements.paid.value = v;
+      if (id) { byId(id).paid = v === '' ? null : +v; touch(); render(); }
+      payBox();
+    };
+    ef.addEventListener('input', (e) => { if (e.target.name === 'amtDue' || e.target.name === 'paid') payBox(); });
+    $('#paybox').addEventListener('click', (e) => {
+      if (e.target.id === 'b-payfull') {
+        if (!num(ef.elements.amtDue.value)) { payBox(); $('#pay-msg').textContent = 'Enter the amount due first (try "Calculate total").'; return; }
+        prevPaid = ef.elements.paid.value;
+        applyPaid(ef.elements.amtDue.value);
+        if (!ef.elements.method.value) ef.elements.method.focus();
+      }
+      if (e.target.id === 'b-unpay') applyPaid(prevPaid === ef.elements.amtDue.value ? '' : prevPaid);
+    });
+    payBox();
     $('#b-cancel').onclick = () => dlg.close();
     if (id) $('#b-del').onclick = () => {
       if (!confirm(`Delete the order for ${o.name}? This can't be undone.`)) return;

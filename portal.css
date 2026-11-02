@@ -146,3 +146,10 @@ table.ref td { padding: 6px 12px; }
 }
 dialog { max-height: 92vh; overflow-y: auto; }
 .ef > .actions:last-child { position: sticky; bottom: 0; background: var(--bg); padding: 10px 0 4px; border-top: 1px solid var(--border); margin-top: 4px; }
+
+.paybox { background: var(--alt); border-radius: 10px; padding: 10px 12px; display: grid; gap: 8px; }
+.paysum { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: .9rem; }
+.payact { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pill.paidfull { background: #d9f2de; color: #1f6b34; border-color: #a9dbb5; font-size: .85rem; padding: 4px 12px; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .pill.paidfull { background: #1d3a27; color: #8fd9a3; border-color: #2d5a3c; } }
+.paysum .ok { color: #2e7d32; }
