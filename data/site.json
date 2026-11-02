@@ -1,10 +1,33 @@
 {
-  "name": "Mom's Cookies",
-  "tagline": "Homemade cookies, baked fresh to order.",
-  "heroText": "Browse the menu, build your order, and we'll confirm pickup details with you.",
-  "about": "Every batch is made from scratch in a home kitchen with real butter and no shortcuts. Tell us about your occasion and we'll bake something special.",
-  "email": "",
+  "name": "Gina's Cookie Jar",
+  "tagline": "Custom decorated cookies for every celebration.",
+  "heroText": "Tell us about your event and we'll design a set of cookies to match.",
+  "about": "Every set is baked from scratch and hand-decorated to order. Tell us your colors, theme and date and we'll take it from there.",
+  "messenger": "",
   "phone": "",
   "location": "",
-  "hours": "Orders baked Thursday–Saturday"
+  "pricing": {
+    "perCookie": 4.35,
+    "cookiesPerBox": 18,
+    "bagPerCookie": 0.04,
+    "boxPrice": 1.5,
+    "ribbonPerBox": 1.0,
+    "tissuePerBox": 0.5,
+    "includedColors": 3,
+    "extraColorFee": 7.0,
+    "rushPerDozen": 5.0,
+    "metallicPerCookie": 0.5
+  },
+  "occasions": [
+    {"name": "Birthday", "emoji": "🎂"},
+    {"name": "Graduation", "emoji": "🎓"},
+    {"name": "Baby Shower", "emoji": "🍼"},
+    {"name": "Bridal / Bachelorette", "emoji": "💍"},
+    {"name": "Football / Sports", "emoji": "🏈"},
+    {"name": "Thanksgiving", "emoji": "🦃"},
+    {"name": "Christmas", "emoji": "🎄"},
+    {"name": "Easter", "emoji": "🐣"},
+    {"name": "Valentine's", "emoji": "💝"},
+    {"name": "Other event", "emoji": "🎉"}
+  ]
 }

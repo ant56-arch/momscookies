@@ -104,31 +104,26 @@ nav a:hover { color: var(--accent); }
 
 .site-footer { text-align: center; padding: 28px 16px; color: var(--muted); border-top: 1px solid var(--border); }
 
-/* drawer */
-.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 30; }
-.drawer {
-  position: fixed; top: 0; right: 0; bottom: 0; z-index: 40;
-  width: min(420px, 100%); background: var(--bg);
-  padding: 16px; overflow-y: auto;
-  transform: translateX(100%); transition: transform .25s ease;
-  box-shadow: -8px 0 24px rgba(0,0,0,.2);
-  font-family: system-ui, sans-serif;
-}
-.drawer.open { transform: none; }
-.drawer-head { display: flex; justify-content: space-between; align-items: center; }
-.drawer-head h2 { margin: 0; font-family: Georgia, serif; }
-.icon-btn { font-size: 1.8rem; line-height: 1; background: none; border: 0; cursor: pointer; color: var(--text); }
-.cart-items { margin: 12px 0; display: grid; gap: 10px; }
-.line { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
-.qty { display: inline-flex; align-items: center; gap: 8px; }
-.qty button {
-  width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
-  border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 1rem;
-}
-.total-row { display: flex; justify-content: space-between; padding: 10px 0; font-size: 1.1rem; }
-.order-form { display: grid; gap: 10px; }
+/* order + quote */
+.order-wrap { display: grid; gap: 24px; grid-template-columns: 1fr 340px; align-items: start; }
+@media (max-width: 800px) { .order-wrap { grid-template-columns: 1fr; } }
+.order-form { display: grid; gap: 12px; font-family: system-ui, sans-serif; }
 .order-form label { display: grid; gap: 4px; font-size: .9rem; }
-.order-form input, .order-form textarea {
+.order-form label.check { display: flex; gap: 8px; align-items: center; }
+.order-form .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.order-form input:not([type=checkbox]), .order-form textarea, .order-form select {
   font: inherit; padding: 9px 10px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--surface); color: var(--text);
 }
+.quote {
+  position: sticky; top: 76px; font-family: system-ui, sans-serif;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;
+}
+.quote h3 { margin: 0 0 8px; font-family: Georgia, serif; }
+.quote dl { margin: 0; display: grid; gap: 4px; font-size: .9rem; }
+.quote dl div { display: flex; justify-content: space-between; gap: 8px; }
+.quote dt, .quote dd { margin: 0; }
+.total-row { display: flex; justify-content: space-between; padding: 12px 0 4px; margin-top: 8px; border-top: 1px solid var(--border); font-size: 1.15rem; }
+.card h3 { text-align: center; }
+.card .body { padding: 10px; }
+#gallery { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }

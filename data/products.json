@@ -1,6 +1,0 @@
-[
-  {"id": "choc-chip", "name": "Chocolate Chip", "description": "Classic, chewy, loaded with chocolate. (Sample item)", "price": 12, "unit": "dozen", "category": "Classics", "available": true},
-  {"id": "oatmeal-raisin", "name": "Oatmeal Raisin", "description": "Soft oats, plump raisins, a hint of cinnamon. (Sample item)", "price": 12, "unit": "dozen", "category": "Classics", "available": true},
-  {"id": "sugar", "name": "Frosted Sugar Cookies", "description": "Buttery cut-outs with sweet frosting. (Sample item)", "price": 18, "unit": "dozen", "category": "Specialty", "available": true},
-  {"id": "snickerdoodle", "name": "Snickerdoodle", "description": "Cinnamon-sugar coated and soft in the middle. (Sample item)", "price": 12, "unit": "dozen", "category": "Classics", "available": false}
-]
