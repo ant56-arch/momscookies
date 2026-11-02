@@ -24,6 +24,12 @@
   // ---------- wording helpers ----------
   const plural = (n, one, many) => `${Number(n).toLocaleString()} ${Number(n) === 1 ? one : many || one + 's'}`;
   const cookiesOf = (q) => (q == null || q === '' ? '? cookies' : plural(+q, 'cookie'));
+  const pageHead = (title, sub, actions = '') => `<div class="page-head"><div><h2>${title}</h2>${sub ? `<p class="sub">${sub}</p>` : ''}</div>${actions ? `<div class="ph-actions">${actions}</div>` : ''}</div>`;
+  const relDue = (d, today) => {
+    if (!d) return '';
+    const diff = Math.round((new Date(d + 'T00:00') - new Date(today + 'T00:00')) / 864e5);
+    return diff === 0 ? ' · today' : diff === 1 ? ' · tomorrow' : diff > 1 && diff <= 14 ? ` · in ${diff} days` : diff < 0 ? ` · ${plural(-diff, 'day')} ago` : '';
+  };
   const SMALL_WORDS = new Set(['a', 'an', 'and', 'at', 'by', 'for', 'in', 'of', 'on', 'or', 'the', 'to', 'vs', 'with']);
   const tidySpace = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
   const upFirst = (v) => v.charAt(0).toUpperCase() + v.slice(1);
@@ -52,7 +58,7 @@
 
   const S = {
     key: null, salt: null, iter: 600000, sha: null, vault: null, site: null,
-    pKind: 'all', pOcc: '', pYear: 'All', pq: '', tab: 'home', filter: 'Orders', oyear: 'All', sort: 'newest', q: '', year: null, refSheet: null, dirty: false,
+    oview: (() => { try { return localStorage.getItem('gcj_oview') || 'list'; } catch { return 'list'; } })(), pKind: 'all', pOcc: '', pYear: 'All', pq: '', tab: 'home', filter: 'Orders', oyear: 'All', sort: 'newest', q: '', year: null, refSheet: null, dirty: false,
   };
 
   /* ---------- crypto ---------- */
@@ -377,28 +383,66 @@
     const next = active.filter((o) => o.due && o.due >= today).sort((a, b) => a.due.localeCompare(b.due))[0];
     const count = (st) => orders.filter((o) => o.status === st).length;
     const chip = (k, l, c) => `<button class="chip" data-f="${k}" aria-selected="${S.filter === k}">${l}${c == null ? '' : ` (${c})`}</button>`;
-    main.innerHTML = `<h2>Orders</h2>
+    const board = S.oview === 'board';
+    const yearSel = `<select id="oyear" aria-label="Year"><option value="All">All years</option>${years.map((y) => `<option${S.oyear === y ? ' selected' : ''}>${y}</option>`).join('')}</select>`;
+    main.innerHTML = `${pageHead('Orders', `${plural(orders.length - count('Declined'), 'order')} · ${active.length} active`,
+      `<div class="seg" role="group" aria-label="View"><button data-oview="list" aria-pressed="${!board}">List</button><button data-oview="board" aria-pressed="${board}">Board</button></div><button class="btn small" data-new>+ New order</button>`)}
       <div class="kpis">
         <div class="kpi"><b>${active.length}</b><span>Active orders</span></div>
         <div class="kpi"><b>${active.reduce((s, o) => s + num(o.qty), 0).toLocaleString()}</b><span>Cookies to bake</span></div>
         <div class="kpi"><b class="${owed.length ? 'neg' : ''}">${money(owed.reduce((s, o) => s + balance(o), 0))}</b><span>Owed to you (${owed.length})</span></div>
         <div class="kpi"><b style="font-size:1.05rem">${next ? esc(fmtDate(next.due)) : '—'}</b><span>${next ? 'Next: ' + esc(short(next.name)) : 'No upcoming pickups'}</span></div>
       </div>
-      <div class="bar">
-        <button class="btn small" data-new>+ New order</button>
-        <input class="grow" id="q" type="search" placeholder="Search name, event, notes, payment…" value="${esc(S.q)}">
-      </div>
-      <div class="bar">
+      <div class="bar"><input class="grow" id="q" type="search" placeholder="Search name, event, notes, payment…" value="${esc(S.q)}">${board ? yearSel : ''}</div>
+      ${board ? `<p class="muted small drop-tip">Drag a card to another column to change its status.</p><div id="board" class="board"></div>` : `<div class="bar">
         ${chip('Orders', 'Orders', orders.length - count('Declined'))}${chip('Active', 'Active', active.length)}${chip('Owes', 'Owes money', owed.length)}${chip('Completed', 'Completed', count('Completed'))}${chip('Declined', 'Declined', count('Declined'))}${chip('NoOcc', 'No occasion', orders.filter(noOcc).length)}
         <span class="sp"></span>
-        <select id="oyear" aria-label="Year"><option value="All">All years</option>${years.map((y) => `<option${S.oyear === y ? ' selected' : ''}>${y}</option>`).join('')}</select>
+        ${yearSel}
         <select id="osort" aria-label="Sort">${[['newest', 'Newest first'], ['oldest', 'Oldest first'], ['due', 'Due date'], ['total', 'Highest total'], ['name', 'Customer A–Z']].map(([v, l]) => `<option value="${v}"${S.sort === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
         <button class="btn ghost small" id="csv" type="button" title="Download the orders shown as a spreadsheet">Export CSV</button>
       </div>
       <p class="muted small drop-tip">Tip: drag pictures from your computer onto any order below to attach them to it.</p>
       <div id="list" class="olist"></div>
-      ${S.filter === 'Orders' ? `<p class="muted small">${count('Declined')} cancelled / no-order inquiries are hidden — see the Declined filter.</p>` : ''}`;
-    drawList();
+      ${S.filter === 'Orders' ? `<p class="muted small">${count('Declined')} cancelled / no-order inquiries are hidden — see the Declined filter.</p>` : ''}`}`;
+    drawOrders();
+  }
+  const drawOrders = () => (S.oview === 'board' ? drawBoard() : drawList());
+
+  const BOARD_COLS = ['Requested', 'Confirmed', 'Baking', 'Ready', 'Completed'];
+  function drawBoard() {
+    const el = $('#board'); if (!el) return;
+    const q = S.q.toLowerCase(), y = S.oyear, today = todayISO();
+    const match = (o) => (y === 'All' || (o.due || o.requested || '').startsWith(y))
+      && (!q || [o.name, o.event, o.type, o.notes, o.colors].join(' ').toLowerCase().includes(q));
+    const card = (o) => {
+      const bal = balance(o), over = OPEN.includes(o.status) && o.due && o.due < today, pc = photoCount(o.id);
+      return `<article class="bcard st-${o.status}" draggable="true" data-id="${o.id}">
+        <div class="bc-top"><b>${esc(o.name)}</b>${num(o.rush) > 0 ? '<span class="pill rush">⚡ Rush</span>' : ''}</div>
+        <div class="bc-sub">${esc(o.event || o.type || '')}</div>
+        <div class="bc-meta"><span class="${over ? 'neg' : ''}">${o.due ? esc(fmtDate(o.due)) + (OPEN.includes(o.status) ? esc(relDue(o.due, today)) : '') : 'No date'}</span><span>${cookiesOf(o.qty)}</span></div>
+        <div class="bc-foot"><span>${o.amtDue == null ? '' : money(o.amtDue)}</span>${o.amtDue == null ? '' : bal > 0.005 ? `<span class="neg">${money(bal)} due</span>` : '<span class="ok">✓ Paid</span>'}${pc ? `<span>📷 ${pc}</span>` : ''}</div>
+        <select class="bc-move" data-sid="${o.id}" aria-label="Move to">${STATUSES.map((st) => `<option${st === o.status ? ' selected' : ''}>${st}</option>`).join('')}</select></article>`;
+    };
+    el.innerHTML = BOARD_COLS.map((st) => {
+      let list = S.vault.orders.filter((o) => o.status === st && match(o));
+      const total = list.length, cookies = list.reduce((t, o) => t + num(o.qty), 0);
+      list = st === 'Completed' ? list.sort(newestFirst).slice(0, 8) : list.sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'));
+      return `<section class="bcol st-${st}" data-col="${st}"><div class="bhead"><span class="bdot"></span><b>${st}</b><span class="bcount">${total}</span></div>
+        ${total ? `<div class="bsum muted small">${plural(cookies, 'cookie')}</div>` : ''}
+        <div class="bcards">${list.map(card).join('') || '<p class="muted small" style="margin:6px">Nothing here.</p>'}</div>
+        ${st === 'Completed' && total > list.length ? `<p class="muted small" style="margin:8px 6px 0">Showing the latest ${list.length} of ${total}. Use the List view to see all.</p>` : ''}</section>`;
+    }).join('');
+    const hot = (c) => el.querySelectorAll('.col-hot').forEach((x) => x !== c && x.classList.remove('col-hot'));
+    el.ondragstart = (e) => { const c = e.target.closest('.bcard'); if (!c) return; e.dataTransfer.setData('text/plain', c.dataset.id); e.dataTransfer.effectAllowed = 'move'; setTimeout(() => c.classList.add('dragging'), 0); };
+    el.ondragend = () => { el.querySelectorAll('.dragging').forEach((x) => x.classList.remove('dragging')); hot(null); el.querySelectorAll('.col-hot').forEach((x) => x.classList.remove('col-hot')); };
+    el.ondragover = (e) => { if (hasFiles(e)) return; const c = e.target.closest('.bcol'); if (!c) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; hot(c); c.classList.add('col-hot'); };
+    el.ondrop = (e) => {
+      if (hasFiles(e)) return;
+      const c = e.target.closest('.bcol'); if (!c) return;
+      e.preventDefault();
+      const o = byId(e.dataTransfer.getData('text/plain'));
+      if (o && o.status !== c.dataset.col) { o.status = c.dataset.col; touch(); render(); } else el.ondragend();
+    };
   }
 
   function filtered() {
@@ -703,27 +747,41 @@
       return { l: d.toLocaleDateString(undefined, { month: 'short' }), v: sumPaid(`${d.getFullYear()}-${pad(d.getMonth() + 1)}`) };
     });
     const attention = [...overdue, ...undated];
+    const monShort = (iso) => new Date(iso + 'T00:00').toLocaleDateString(undefined, { month: 'short' });
+    const cuRow = (o) => `<div class="cu st-${o.status}" data-id="${o.id}"><span class="datebadge"><small>${monShort(o.due)}</small><b>${+o.due.slice(8, 10)}</b></span>
+      <span class="cu-main"><b>${esc(o.name)}</b><small>${esc(o.event || o.type || '')}${o.event || o.type ? ' · ' : ''}${cookiesOf(o.qty)}${esc(relDue(o.due, today))}</small></span>
+      <span class="cu-end"><span class="pill st-${o.status}">${o.status}</span>${balance(o) > 0.005 && o.amtDue != null ? `<span class="neg small">${money(balance(o))} due</span>` : ''}</span></div>`;
+    const strip = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i), iso = isoDate(d), n = upcoming.filter((o) => o.due === iso).length;
+      return `<button class="dchip${n ? ' has' : ''}${i === 0 ? ' today' : ''}" data-calday="${iso}"><span class="dw">${i === 0 ? 'Today' : d.toLocaleDateString(undefined, { weekday: 'short' })}</span><span class="dn">${d.getDate()}</span><span class="dc">${n ? plural(n, 'order') : '—'}</span></button>`;
+    }).join('');
+    const recent = [...photos()].sort((a, b) => (b.added || '').localeCompare(a.added || '') || (b.date || '').localeCompare(a.date || '')).slice(0, 6);
     main.innerHTML = `<section class="hero-card">
         <div><h2>${greet}! 🍪</h2>
           <p>${week.length ? `<b>${week.length}</b> pickup${week.length === 1 ? '' : 's'} in the next 7 days · <b>${week.reduce((s, o) => s + num(o.qty), 0)}</b> ${week.reduce((s, o) => s + num(o.qty), 0) === 1 ? 'cookie' : 'cookies'} to bake` : 'Nothing due in the next 7 days.'}</p></div>
         <div class="qa"><button class="btn" data-new>+ New order</button><button class="btn ghost" data-tab="calculator">Calculator</button><button class="btn ghost" data-tab="calendar">Calendar</button></div>
       </section>
+      <div class="daystrip" aria-label="Next 7 days">${strip}</div>
       <div class="kpis">
-        <div class="kpi"><b>${active.length}</b><span>Active orders</span></div>
-        <div class="kpi"><b class="${owed.length ? 'neg' : ''}">${money(owed.reduce((s, o) => s + balance(o), 0))}</b><span>Owed to you (${owed.length})</span></div>
-        <div class="kpi"><b>${money(sumPaid(today.slice(0, 7)))}</b><span>Collected in ${now.toLocaleDateString(undefined, { month: 'long' })}</span></div>
-        <div class="kpi"><b>${money(sumPaid(today.slice(0, 4)))}</b><span>Collected in ${now.getFullYear()}</span></div>
+        <div class="kpi"><span class="kic">📋</span><b>${active.length}</b><span>Active orders</span></div>
+        <div class="kpi"><span class="kic">💸</span><b class="${owed.length ? 'neg' : ''}">${money(owed.reduce((s, o) => s + balance(o), 0))}</b><span>Owed to you (${owed.length})</span></div>
+        <div class="kpi"><span class="kic">📅</span><b>${money(sumPaid(today.slice(0, 7)))}</b><span>Collected in ${now.toLocaleDateString(undefined, { month: 'long' })}</span></div>
+        <div class="kpi"><span class="kic">🏆</span><b>${money(sumPaid(today.slice(0, 4)))}</b><span>Collected in ${now.getFullYear()}</span></div>
       </div>
       <div class="panels">
         <div class="panel"><h3>Coming up</h3>
-          ${upcoming.length ? upcoming.slice(0, 6).map(evRow).join('') : '<p class="muted">No upcoming pickups. Add an order to get started.</p>'}
+          ${upcoming.length ? upcoming.slice(0, 6).map(cuRow).join('') : '<p class="muted">No upcoming pickups. Add an order to get started.</p>'}
           ${upcoming.length > 6 ? '<button class="btn ghost small" data-tab="calendar">See all in calendar</button>' : ''}</div>
         <div class="panel"><h3>Needs attention</h3>
           ${attention.length ? `<div class="sub">Overdue or no date</div>${attention.slice(0, 5).map(evRow).join('')}` : ''}
           ${owed.length ? `<div class="sub">Balances owed</div>${owed.slice(0, 5).map(evRow).join('')}` : ''}
           ${!attention.length && !owed.length ? '<p class="muted">All caught up. 🎉</p>' : ''}</div>
       </div>
+      ${recent.length ? `<div class="panel"><div class="mhead"><h3>Recent photos</h3><button class="btn ghost small" data-tab="photos">See all</button></div>
+        <div class="pgrid small" id="homephotos">${recent.map((x) => `<button class="ptile" data-pid="${x.id}" aria-label="${esc(x.caption || 'Photo')}"></button>`).join('')}</div></div>` : ''}
       <div class="panel"><h3>Collected, last 6 months</h3>${bars(months)}</div>`;
+    const hp = $('#homephotos');
+    if (hp) { lazyThumbs(hp); hp.onclick = (e) => { const t = e.target.closest('[data-pid]'); if (t) { const ids = recent.map((x) => x.id); openViewer(ids, ids.indexOf(t.dataset.pid)); } }; }
   }
 
   function viewMore(main) {
@@ -862,6 +920,7 @@
 
   function openUpload(files, preset, onDone) {
     const dlg = $('#dlg2'), ord = preset.orderId ? byId(preset.orderId) : null;
+    dlg.classList.remove('wide');
     const g = ord ? occasionOf(ord) : null;
     dlg.innerHTML = `<form class="tagger" id="up" novalidate>
       <div class="tg-top"><h2 style="margin:0">Add ${plural(files.length, 'photo')}</h2></div>
@@ -920,19 +979,24 @@
     const draw = () => {
       const ph = photoById(ids[i]);
       if (!ph) { dlg.close(); return; }
-      dlg.innerHTML = `<div class="viewer" id="pv">
-        <div class="pv-top"><span class="muted">${i + 1} of ${ids.length}</span><span style="flex:1"></span><button class="btn ghost small" data-dl>Download</button><button class="btn small" data-x>Close</button></div>
-        <div class="pv-stage"><button class="pv-nav" data-prev aria-label="Previous photo"${i ? '' : ' disabled'}>‹</button>
-          <div class="pv-box"><img id="pv-img" alt="${esc(ph.caption || 'Cookie photo')}"><div class="pv-load" id="pv-load">Loading…</div></div>
-          <button class="pv-nav" data-next aria-label="Next photo"${i < ids.length - 1 ? '' : ' disabled'}>›</button></div>
-        <div class="fgrid pv-form">
-          <label>Type<select name="kind">${kindOptions(ph.kind)}</select></label>
-          <label>Occasion<select name="occasion">${occOptions(ph.occasion)}</select></label>
-          <label>Date<input type="date" name="date" value="${esc(ph.date)}"></label>
-          <label class="wide">Customer or order<select name="orderId">${orderOptions(ph.orderId || '')}</select></label>
-          <label class="wide">Caption<input name="caption" value="${esc(ph.caption)}" placeholder="Add a caption"></label>
+      dlg.innerHTML = `<div class="viewer pane" id="pv">
+        <div class="pv-main">
+          <div class="pv-top"><span>${i + 1} of ${ids.length}</span><span style="flex:1"></span><button class="btn ghost small" data-dl>Download</button><button class="btn small" data-x>Close</button></div>
+          <div class="pv-stage"><button class="pv-nav" data-prev aria-label="Previous photo"${i ? '' : ' disabled'}>‹</button>
+            <div class="pv-box"><img id="pv-img" alt="${esc(ph.caption || 'Cookie photo')}"><div class="pv-load" id="pv-load">Loading…</div></div>
+            <button class="pv-nav" data-next aria-label="Next photo"${i < ids.length - 1 ? '' : ' disabled'}>›</button></div>
         </div>
-        <div class="actions"><button class="btn danger small" data-del>Delete photo</button>${ph.orderId && byId(ph.orderId) ? '<button class="btn ghost small" data-openorder>Open order</button>' : ''}</div></div>`;
+        <aside class="pv-side">
+          <h3 style="margin:0">Photo details</h3>
+          <div class="fgrid pv-form">
+            <label>Type<select name="kind">${kindOptions(ph.kind)}</select></label>
+            <label>Occasion<select name="occasion">${occOptions(ph.occasion)}</select></label>
+            <label>Date<input type="date" name="date" value="${esc(ph.date)}"></label>
+            <label class="wide">Customer or order<select name="orderId">${orderOptions(ph.orderId || '')}</select></label>
+            <label class="wide">Caption<input name="caption" value="${esc(ph.caption)}" placeholder="Add a caption"></label>
+          </div>
+          <div class="actions"><button class="btn danger small" data-del>Delete photo</button>${ph.orderId && byId(ph.orderId) ? '<button class="btn ghost small" data-openorder>Open order</button>' : ''}</div>
+        </aside></div>`;
       const img = $('#pv-img');
       photoUrl(ph.id, 't').then((u) => { if (!img.dataset.full && ids[i] === ph.id) img.src = u; }).catch(() => {});
       photoUrl(ph.id, 'f').then((u) => { if (ids[i] === ph.id) { img.dataset.full = '1'; img.src = u; const l = $('#pv-load'); if (l) l.remove(); } })
@@ -971,7 +1035,8 @@
       ph[f] = e.target.value.trim ? e.target.value.trim() : e.target.value; touch();
     };
     dlg.onkeydown = (e) => { if (e.key === 'ArrowLeft') go(-1); if (e.key === 'ArrowRight') go(1); };
-    dlg.onclose = () => { dlg.onclick = null; dlg.onchange = null; dlg.onkeydown = null; dlg.onclose = null; if (onClose) onClose(); render(); };
+    dlg.classList.add('wide');
+    dlg.onclose = () => { dlg.classList.remove('wide'); dlg.onclick = null; dlg.onchange = null; dlg.onkeydown = null; dlg.onclose = null; if (onClose) onClose(); render(); };
     draw();
     dlg.showModal();
   }
@@ -981,13 +1046,13 @@
     const years = [...new Set(all.map((x) => (x.date || '').slice(0, 4)).filter(Boolean))].sort().reverse();
     const mine = all.filter((x) => x.kind === 'finished').length, insp = all.length - mine;
     const chip = (k, l, c) => `<button class="chip" data-pk="${k}" aria-selected="${S.pKind === k}">${l} (${c})</button>`;
-    main.innerHTML = `<h2>Photos</h2>
+    main.innerHTML = `${pageHead('Photos', `${plural(all.length, 'photo')} · ${mine} my work · ${insp} inspiration`, '<button class="btn small" data-photoadd>+ Add photos</button>')}
       ${tok() ? '' : '<div class="notice">Photos are saved to your GitHub repository, so add your token in <button class="linkbtn" data-tab="settings">Settings</button> before uploading. You can still look at photos that are already saved.</div>'}
-      <div class="bar"><button class="btn small" data-photoadd>+ Add photos</button><input class="grow" id="pq" type="search" placeholder="Search captions and customers…" value="${esc(S.pq)}"></div>
+      <div class="bar"><input class="grow" id="pq" type="search" placeholder="Search captions and customers…" value="${esc(S.pq)}"></div>
       <div class="bar">${chip('all', 'All', all.length)}${chip('finished', 'My work', mine)}${chip('inspiration', 'Inspiration', insp)}<span class="sp"></span>
         <select id="p-occ" aria-label="Occasion"><option value="">All occasions</option>${OCCASIONS.map(([n]) => `<option${S.pOcc === n ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
         <select id="p-year" aria-label="Year"><option value="All">All years</option>${years.map((y) => `<option${S.pYear === y ? ' selected' : ''}>${y}</option>`).join('')}</select></div>
-      <div id="pgrid" class="pgrid"></div>`;
+      <div id="pgrid" class="pgrid masonry"></div>`;
     const draw = () => {
       const q = S.pq.toLowerCase();
       const list = all.filter((x) => (S.pKind === 'all' || x.kind === S.pKind) && (!S.pOcc || x.occasion === S.pOcc) && (S.pYear === 'All' || (x.date || '').startsWith(S.pYear))
@@ -996,7 +1061,7 @@
       const grid = $('#pgrid');
       grid.innerHTML = list.length ? list.map((x) => {
         const o = byId(x.orderId);
-        return `<button class="ptile" data-pid="${x.id}" aria-label="${esc(x.caption || (o && o.name) || 'Photo')}">
+        return `<button class="ptile" data-pid="${x.id}" style="--ar:${x.w || 1} / ${x.h || 1}" aria-label="${esc(x.caption || (o && o.name) || 'Photo')}">
           ${x.kind === 'inspiration' ? '<span class="ptag" title="Inspiration">💡</span>' : ''}
           <span class="pcap">${o ? `<b>${esc(o.name)}</b>` : ''}${x.caption ? `<span>${esc(x.caption)}</span>` : x.occasion ? `<span>${esc(x.occasion)}</span>` : ''}</span></button>`;
       }).join('') : `<div class="empty"><div style="font-size:2.4rem">📷</div><p><b>${all.length ? 'No photos match these filters.' : 'No photos yet.'}</b></p>
@@ -1409,6 +1474,10 @@
     if (t.id === 'lock' || t.closest('#lock-more')) { if (S.dirty && !confirm('You have unsaved changes. Lock anyway?')) return; S.dirty = false; location.reload(); return; }
     if (t.closest('[data-new]')) { openEdit(null); return; }
     if (t.closest('[data-tag]')) { openTagger(); return; }
+    const ov = t.closest('[data-oview]');
+    if (ov) { S.oview = ov.dataset.oview; try { localStorage.setItem('gcj_oview', S.oview); } catch { /* ignore */ } render(); return; }
+    const cd = t.closest('[data-calday]');
+    if (cd) { const [yy, mm] = cd.dataset.calday.split('-').map(Number); S.cal = { y: yy, m: mm - 1 }; S.calDay = cd.dataset.calday; S.tab = 'calendar'; render(); window.scrollTo(0, 0); return; }
     if (t.closest('[data-photoadd]')) { pickPhotos({}); return; }
     const pk = t.closest('[data-pk]');
     if (pk) { S.pKind = pk.dataset.pk; render(); return; }
@@ -1486,7 +1555,7 @@
     }
   });
   document.addEventListener('input', (e) => {
-    if (e.target.id === 'q') { S.q = e.target.value; drawList(); }
+    if (e.target.id === 'q') { S.q = e.target.value; drawOrders(); }
     if (e.target.id === 'pq') { S.pq = e.target.value; drawPhotoGrid(); }
   });
 
