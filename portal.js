@@ -677,6 +677,7 @@
     const cov = list.length ? Math.round(known / list.length * 100) : 100;
     const untagged = S.vault.orders.filter((o) => o.status === 'Completed' && !(o.type || '').trim()).length;
     const top = rows[0];
+    const nCheck = labelCount(labelIssues());
     const row = (r, cls = '') => `<div class="orr ${cls}">
         <span class="on"><span class="oe">${OCC_EMOJI[r.name] || '🍪'}</span><span class="oname">${esc(r.name)}${r.guess ? `<small title="Guessed from the event name">${r.guess} guessed</small>` : ''}</span></span>
         <span class="obar"><i style="width:${Math.max(2, r.rev / max * 100)}%"></i></span>
@@ -688,12 +689,77 @@
       ${top ? `<p class="insight"><b>${esc(top.name)}</b> is your top occasion — ${money(top.rev)}, ${total ? Math.round(top.rev / total * 100) : 0}% of ${scope === 'all' ? 'all-time' : year} revenue.</p>` : ''}
       <div class="cover"><div class="covbar"><i style="width:${cov}%"></i></div>
         <span>${cov === 100 ? '✓ Every order has an occasion' : `Occasion is known for <b>${known}</b> of <b>${list.length}</b> orders (${cov}%)`}${guessed ? ` · ${guessed} guessed from the event name` : ''}</span>
-        ${untagged ? `<button class="btn small" data-tag>Tag ${untagged} order${untagged === 1 ? '' : 's'}</button>` : ''}</div>
+        ${untagged ? `<button class="btn small" data-tag>Tag ${untagged} order${untagged === 1 ? '' : 's'}</button>` : ''}
+        ${nCheck ? `<button class="btn ghost small" data-check>Check labels (${nCheck})</button>` : ''}</div>
       <div class="orr ohd"><span>Occasion</span><span></span><span class="ov">Collected</span><span class="op">Share</span><span class="oc">Orders</span><span class="oa">Average</span></div>
       ${rows.map((r) => row(r)).join('') || '<p class="muted">No completed orders in this period.</p>'}
       ${unk ? row(unk, 'unk') : ''}
       ${unk ? '<p class="muted small">“Not set” orders have no occasion yet, so they are not in any group above. Use <b>Tag orders</b> to fill them in quickly.</p>' : ''}
     </div>`;
+  }
+
+  /* ---------- check labels ---------- */
+  // Finds orders whose occasion looks inconsistent with their event name.
+  function labelIssues() {
+    const out = { wrong: [], vague: [], tidy: [] };
+    for (const o of S.vault.orders) {
+      if (o.status === 'Declined') continue;
+      const raw = (o.type || '').trim();
+      if (!raw) continue; // blanks are handled by "Tag orders"
+      const name = OCC_LEGACY[raw.toLowerCase()] || raw;
+      if (name !== raw) out.tidy.push({ o, current: raw, suggest: name });
+      if (o.occOk) continue;
+      const hit = OCC_RULES.find(([re]) => re.test([o.event, o.notes, o.colors].join(' ')));
+      if (!hit || hit[1] === name) continue;
+      const generic = name === 'Party / Event' || name === 'Other';
+      if (!generic && hit[1] === 'Party / Event') continue; // "party" alone doesn't contradict a specific occasion
+      (generic ? out.vague : out.wrong).push({ o, current: raw, suggest: hit[1] });
+    }
+    const byDate = (a, b) => (b.o.due || b.o.requested || '').localeCompare(a.o.due || a.o.requested || '');
+    out.wrong.sort(byDate); out.vague.sort(byDate);
+    return out;
+  }
+  const labelCount = (iss) => iss.wrong.length + iss.vague.length + (iss.tidy.length ? 1 : 0);
+
+  function openLabelCheck() {
+    const dlg = $('#dlg');
+    const item = ({ o, current, suggest }, kind) => `<div class="lc-item">
+      <div class="lc-head"><b>${esc(o.name)}</b><span class="muted small">${esc(fmtDate(o.due || o.requested)) || 'no date'} · ${o.qty ?? '?'} cookies · ${money(o.paid ?? o.amtDue ?? 0)}</span></div>
+      <div class="lc-ev">“${esc(o.event || o.notes || o.colors)}”</div>
+      <div class="lc-change"><span class="pill">${OCC_EMOJI[OCC_LEGACY[current.toLowerCase()] || current] || ''} ${esc(current)}</span><span aria-hidden="true">→</span><span class="pill lc-new">${OCC_EMOJI[suggest] || ''} ${esc(suggest)}</span></div>
+      <div class="actions"><button class="btn small" data-use="${o.id}" data-kind="${kind}">Use ${esc(suggest)}</button>
+        <button class="btn ghost small" data-keep="${o.id}">Keep ${esc(current)}</button>
+        <button class="btn ghost small" data-edit="${o.id}">Edit order</button></div></div>`;
+    const draw = () => {
+      const iss = labelIssues(), total = labelCount(iss);
+      dlg.innerHTML = `<div class="tagger" id="lc">
+        <div class="tg-top"><h2 style="margin:0">Check labels</h2><span class="sp" style="flex:1"></span><button class="btn ghost small" data-x>Done</button></div>
+        ${total ? `<p class="muted">Orders where the event name points to a different occasion than the label. Your labels are never changed unless you choose.</p>` : '<p class="insight">✓ Everything looks consistent. Nothing to check.</p>'}
+        ${iss.wrong.length ? `<h3>Might be labeled wrong <span class="muted">(${iss.wrong.length})</span></h3>${iss.wrong.map((x) => item(x, 'wrong')).join('')}` : ''}
+        ${iss.vague.length ? `<div class="lc-sec"><h3>Could be more specific <span class="muted">(${iss.vague.length})</span></h3>
+          <button class="btn small" data-useall>Apply all ${iss.vague.length}</button></div>${iss.vague.map((x) => item(x, 'vague')).join('')}` : ''}
+        ${iss.tidy.length ? `<h3>Tidy names <span class="muted">(${iss.tidy.length} orders)</span></h3>
+          <div class="lc-item"><p style="margin:0">Same meaning, different spelling — e.g. ${[...new Set(iss.tidy.map((x) => `“${esc(x.current)}” → ${esc(x.suggest)}`))].slice(0, 5).join(', ')}.</p>
+          <div class="actions"><button class="btn small" data-tidy>Standardize ${iss.tidy.length} names</button></div></div>` : ''}
+      </div>`;
+      $('#lc').onclick = (e) => {
+        const t = e.target;
+        const find = (id) => [...iss.wrong, ...iss.vague].find((x) => x.o.id === id);
+        const use = t.closest('[data-use]'), keep = t.closest('[data-keep]'), edit = t.closest('[data-edit]');
+        if (use) { const x = find(use.dataset.use); if (x) { x.o.type = x.suggest; touch(); draw(); } return; }
+        if (keep) { const x = find(keep.dataset.keep); if (x) { x.o.occOk = true; touch(); draw(); } return; }
+        if (edit) { dlg.onclose = null; dlg.close(); render(); openEdit(edit.dataset.edit); return; }
+        if (t.closest('[data-useall]')) {
+          if (confirm(`Change ${iss.vague.length} generic labels to the more specific occasion?`)) { iss.vague.forEach((x) => (x.o.type = x.suggest)); touch(); draw(); }
+          return;
+        }
+        if (t.closest('[data-tidy]')) { iss.tidy.forEach((x) => (x.o.type = x.suggest)); touch(); draw(); return; }
+        if (t.closest('[data-x]')) dlg.close();
+      };
+    };
+    dlg.onclose = () => { dlg.onclose = null; render(); };
+    draw();
+    dlg.showModal();
   }
 
   function openTagger() {
@@ -932,6 +998,7 @@
     if (t.id === 'lock' || t.closest('#lock-more')) { if (S.dirty && !confirm('You have unsaved changes. Lock anyway?')) return; S.dirty = false; location.reload(); return; }
     if (t.closest('[data-new]')) { openEdit(null); return; }
     if (t.closest('[data-tag]')) { openTagger(); return; }
+    if (t.closest('[data-check]')) { openLabelCheck(); return; }
     const osc = t.closest('[data-occscope]');
     if (osc) { S.occScope = osc.dataset.occscope; render(); return; }
     if (t.closest('#calc-make')) { openEdit(null, S.calcOut); return; }

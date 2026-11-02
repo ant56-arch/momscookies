@@ -420,3 +420,15 @@ dialog::backdrop { background: rgba(30, 15, 8, .55); }
 .oname { display: grid; line-height: 1.2; }
 .oname small { font-size: .74rem; font-weight: 700; color: var(--muted); }
 .orr .on { white-space: nowrap; }
+
+/* ----- check labels ----- */
+#lc h3 { margin: 10px 0 0; }
+.lc-sec { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+.lc-sec h3 { margin: 0; }
+.lc-item { display: grid; gap: 8px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+.lc-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.lc-head b { font-size: 1.1rem; }
+.lc-ev { font-size: 1.05rem; font-style: italic; }
+.lc-change { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lc-change .pill { font-size: .9rem; padding: 4px 12px; }
+.lc-new { background: color-mix(in srgb, var(--good) 18%, var(--surface)); border-color: color-mix(in srgb, var(--good) 50%, transparent); }
