@@ -119,3 +119,30 @@ table.ref td { padding: 6px 12px; }
   .p-tabs { order: 3; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
   .savestate { margin-left: auto; font-size: .75rem; }
 }
+
+/* orders list */
+.bar .sp { flex: 1; }
+.olist { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.orow { display: grid; grid-template-columns: 112px minmax(0, 2fr) 56px 88px 88px 100px 128px; gap: 4px 10px; align-items: center; padding: 9px 12px; border-top: 1px solid var(--border); font-size: .88rem; }
+.orow[data-id] { cursor: pointer; }
+.orow[data-id]:hover { background: var(--alt); }
+.ohead { background: var(--alt); font-weight: 700; font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); border-top: 0; }
+.osec { padding: 8px 12px; font-weight: 700; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--accent-dark); background: var(--alt); border-top: 1px solid var(--border); }
+.c-name b { margin-right: 4px; }
+.c-name small { display: block; color: var(--muted); }
+.c-qty, .c-total, .c-paid, .c-bal { text-align: right; font-variant-numeric: tabular-nums; }
+.pill.warn { background: #fff3cd; color: #7a5b00; border-color: #f0dc8a; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.st-sel { border: 0; border-radius: 999px; padding: 4px 8px; font-size: .8rem; color: var(--text); cursor: pointer; }
+.st-sel.st-Declined { background: var(--alt); color: var(--muted); }
+.otot { display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 10px 12px; border-top: 2px solid var(--border); background: var(--alt); font-size: .85rem; font-weight: 600; }
+.fh { grid-column: 1 / -1; margin: 10px 0 0; padding-bottom: 3px; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+@media (max-width: 700px) {
+  .ohead { display: none; }
+  .orow { grid-template-columns: 1fr auto auto auto; grid-template-areas: "name name name st" "due qty total bal"; padding: 10px 12px; }
+  .c-name { grid-area: name; } .c-st { grid-area: st; } .c-due { grid-area: due; color: var(--muted); font-size: .8rem; }
+  .c-qty { grid-area: qty; } .c-total { grid-area: total; } .c-bal { grid-area: bal; } .c-paid { display: none; }
+  .c-qty, .c-total, .c-bal { font-size: .8rem; }
+  .bar select { flex: 1; min-width: 120px; }
+}
+dialog { max-height: 92vh; overflow-y: auto; }
+.ef > .actions:last-child { position: sticky; bottom: 0; background: var(--bg); padding: 10px 0 4px; border-top: 1px solid var(--border); margin-top: 4px; }

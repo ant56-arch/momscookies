@@ -25,7 +25,7 @@
 
   const S = {
     key: null, salt: null, iter: 600000, sha: null, vault: null, site: null,
-    tab: 'orders', filter: 'Open', q: '', year: null, refSheet: null, dirty: false,
+    tab: 'orders', filter: 'Orders', oyear: 'All', sort: 'newest', q: '', year: null, refSheet: null, dirty: false,
   };
 
   /* ---------- crypto ---------- */
@@ -259,55 +259,124 @@
   const balance = (o) => num(o.amtDue) - num(o.paid);
   const byId = (id) => S.vault.orders.find((o) => o.id === id);
 
+  const owes = (o) => o.status !== 'Declined' && o.amtDue != null && balance(o) > 0.005;
   function viewOrders(main) {
-    const counts = Object.fromEntries(STATUSES.map((s) => [s, S.vault.orders.filter((o) => o.status === s).length]));
-    const chips = [['Open', OPEN.reduce((a, s) => a + counts[s], 0)], ['All', S.vault.orders.length], ...STATUSES.map((s) => [s, counts[s]])];
+    const orders = S.vault.orders, today = todayISO();
+    const active = orders.filter((o) => OPEN.includes(o.status));
+    const owed = orders.filter(owes);
+    const years = [...new Set(orders.map((o) => (o.due || o.requested || '').slice(0, 4)).filter(Boolean))].sort().reverse();
+    const next = active.filter((o) => o.due && o.due >= today).sort((a, b) => a.due.localeCompare(b.due))[0];
+    const count = (st) => orders.filter((o) => o.status === st).length;
+    const chip = (k, l, c) => `<button class="chip" data-f="${k}" aria-selected="${S.filter === k}">${l}${c == null ? '' : ` (${c})`}</button>`;
     main.innerHTML = `<h2>Orders</h2>
+      <div class="kpis">
+        <div class="kpi"><b>${active.length}</b><span>Active orders</span></div>
+        <div class="kpi"><b>${active.reduce((s, o) => s + num(o.qty), 0).toLocaleString()}</b><span>Cookies to bake</span></div>
+        <div class="kpi"><b class="${owed.length ? 'neg' : ''}">${money(owed.reduce((s, o) => s + balance(o), 0))}</b><span>Owed to you (${owed.length})</span></div>
+        <div class="kpi"><b style="font-size:1.05rem">${next ? esc(fmtDate(next.due)) : '—'}</b><span>${next ? 'Next: ' + esc(short(next.name)) : 'No upcoming pickups'}</span></div>
+      </div>
       <div class="bar">
         <button class="btn small" data-new>+ New order</button>
-        <input class="grow" id="q" type="search" placeholder="Search name, event, notes…" value="${esc(S.q)}">
+        <input class="grow" id="q" type="search" placeholder="Search name, event, notes, payment…" value="${esc(S.q)}">
       </div>
-      <div class="bar">${chips.map(([n, c]) => `<button class="chip" data-f="${n}" aria-selected="${S.filter === n}">${n} (${c})</button>`).join('')}</div>
-      <div id="list" class="tablebox"></div>`;
+      <div class="bar">
+        ${chip('Orders', 'Orders', orders.length - count('Declined'))}${chip('Active', 'Active', active.length)}${chip('Owes', 'Owes money', owed.length)}${chip('Completed', 'Completed', count('Completed'))}${chip('Declined', 'Declined', count('Declined'))}
+        <span class="sp"></span>
+        <select id="oyear" aria-label="Year"><option value="All">All years</option>${years.map((y) => `<option${S.oyear === y ? ' selected' : ''}>${y}</option>`).join('')}</select>
+        <select id="osort" aria-label="Sort">${[['newest', 'Newest first'], ['oldest', 'Oldest first'], ['due', 'Due date'], ['total', 'Highest total'], ['name', 'Customer A–Z']].map(([v, l]) => `<option value="${v}"${S.sort === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
+        <button class="btn ghost small" id="csv" type="button" title="Download the orders shown as a spreadsheet">Export CSV</button>
+      </div>
+      <div id="list" class="olist"></div>
+      ${S.filter === 'Orders' ? `<p class="muted small">${count('Declined')} cancelled / no-order inquiries are hidden — see the Declined filter.</p>` : ''}`;
     drawList();
   }
 
+  function filtered() {
+    const f = S.filter, q = S.q.toLowerCase(), y = S.oyear;
+    return S.vault.orders.filter((o) => {
+      if (f === 'Orders' && o.status === 'Declined') return false;
+      if (f === 'Active' && !OPEN.includes(o.status)) return false;
+      if (f === 'Owes' && !owes(o)) return false;
+      if (f === 'Completed' && o.status !== 'Completed') return false;
+      if (f === 'Declined' && o.status !== 'Declined') return false;
+      if (y !== 'All' && !(o.due || o.requested || '').startsWith(y)) return false;
+      if (q && ![o.name, o.event, o.type, o.notes, o.contact, o.reason, o.method, o.colors].join(' ').toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }
+  const when = (o) => o.due || o.requested || '';
+  const SORTS = {
+    newest: (a, b) => when(b).localeCompare(when(a)),
+    oldest: (a, b) => (when(a) || '9999').localeCompare(when(b) || '9999'),
+    due: (a, b) => (a.due || '9999').localeCompare(b.due || '9999'),
+    total: (a, b) => num(b.amtDue) - num(a.amtDue),
+    name: (a, b) => a.name.localeCompare(b.name),
+  };
+
+  function orow(o) {
+    const bal = balance(o), dec = o.status === 'Declined';
+    return `<div class="orow" data-id="${o.id}">
+      <span class="c-due">${esc(fmtDate(o.due)) || '<span class="muted">no date</span>'}</span>
+      <span class="c-name"><b>${esc(o.name)}</b>${num(o.rush) > 0 ? ' <span class="pill rush">⚡ rush</span>' : ''}${o.allergies ? ` <span class="pill warn" title="${esc(o.allergies)}">⚠ ${esc(o.allergies)}</span>` : ''}
+        <small>${esc(dec ? o.reason : (o.event || o.type))}</small></span>
+      <span class="c-qty">${dec || o.qty == null ? '' : o.qty + ' ck'}</span>
+      <span class="c-total">${dec || o.amtDue == null ? '' : money(o.amtDue)}</span>
+      <span class="c-paid">${dec || o.paid == null ? '' : money(o.paid)}</span>
+      <span class="c-bal ${!dec && bal > 0.005 ? 'neg' : 'muted'}">${dec || o.amtDue == null ? '' : bal > 0.005 ? money(bal) + ' due' : '✓ paid'}</span>
+      <span class="c-st"><select class="st-sel st-${o.status}" data-sid="${o.id}" aria-label="Status">${STATUSES.map((s) => `<option${s === o.status ? ' selected' : ''}>${s}</option>`).join('')}</select></span>
+    </div>`;
+  }
+
   function drawList() {
-    const f = S.filter, q = S.q.toLowerCase();
-    let list = S.vault.orders.filter((o) => (f === 'All' ? true : f === 'Open' ? OPEN.includes(o.status) : o.status === f));
-    if (q) list = list.filter((o) => [o.name, o.event, o.type, o.notes, o.contact, o.reason].join(' ').toLowerCase().includes(q));
-    list.sort(f === 'Open'
-      ? (a, b) => (a.due || '9999').localeCompare(b.due || '9999')
-      : (a, b) => (b.due || b.requested || '').localeCompare(a.due || a.requested || ''));
-    $('#list').innerHTML = list.length ? `<table class="t"><thead><tr>
-        <th>Due</th><th>Customer</th><th class="hide-sm">Event</th><th class="n hide-sm">Qty</th><th class="n">Total</th><th class="n">Balance</th><th>Status</th>
-      </tr></thead><tbody>${list.map((o) => {
-        const bal = balance(o);
-        return `<tr data-id="${o.id}">
-          <td>${esc(fmtDate(o.due)) || '<span class="muted">—</span>'}</td>
-          <td>${esc(o.name)}${num(o.rush) > 0 ? ' <span class="pill rush">rush</span>' : ''}</td>
-          <td class="hide-sm">${esc(o.event || o.type)}</td>
-          <td class="n hide-sm">${o.qty ?? ''}</td>
-          <td class="n">${o.amtDue == null ? '' : money(o.amtDue)}</td>
-          <td class="n ${bal > 0.005 && o.status !== 'Declined' ? 'neg' : ''}">${o.amtDue == null || o.status === 'Declined' ? '' : money(bal)}</td>
-          <td><select data-sid="${o.id}" aria-label="Status">${STATUSES.map((s) => `<option${s === o.status ? ' selected' : ''}>${s}</option>`).join('')}</select>${o.reason ? ` <span class="muted small">${esc(o.reason)}</span>` : ''}</td>
-        </tr>`;
-      }).join('')}</tbody></table>` : '<p style="padding:16px" class="muted">No orders match.</p>';
+    let list = filtered();
+    const grouped = S.filter === 'Orders' && S.sort === 'newest' && !S.q && S.oyear === 'All';
+    let html = '';
+    if (grouped) {
+      const act = list.filter((o) => OPEN.includes(o.status)).sort(SORTS.due);
+      const rest = list.filter((o) => !OPEN.includes(o.status)).sort(SORTS.newest);
+      html = (act.length ? `<div class="osec">Active · ${act.length}</div>${act.map(orow).join('')}` : '')
+        + `<div class="osec">Past orders · ${rest.length}</div>${rest.map(orow).join('')}`;
+    } else {
+      list.sort(SORTS[S.sort] || SORTS.newest);
+      html = list.map(orow).join('');
+    }
+    const live = list.filter((o) => o.status !== 'Declined');
+    const tot = live.reduce((s, o) => s + num(o.amtDue), 0), paid = live.reduce((s, o) => s + num(o.paid), 0);
+    $('#list').innerHTML = list.length
+      ? `<div class="orow ohead"><span>Due</span><span>Customer</span><span>Qty</span><span>Total</span><span>Paid</span><span>Balance</span><span>Status</span></div>${html}
+         <div class="otot"><span>${list.length} orders</span><span>${live.reduce((s, o) => s + num(o.qty), 0).toLocaleString()} cookies</span><span>${money(tot)} total</span><span>${money(paid)} paid</span><span>${money(live.filter(owes).reduce((a, o) => a + balance(o), 0))} owed</span></div>`
+      : '<p style="padding:16px" class="muted">No orders match these filters.</p>';
+  }
+
+  function exportCsv() {
+    const list = filtered().sort(SORTS[S.sort] || SORTS.newest);
+    const cols = FIELDS.filter((f) => f[0][0] !== '#');
+    const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const csv = [cols.map((c) => q(c[1])).join(','), ...list.map((o) => cols.map((c) => q(o[c[0]])).join(','))].join('\r\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.download = `orders-${todayISO()}.csv`; a.click();
   }
 
   /* ---------- order editor ---------- */
   const FIELDS = [
+    ['#', 'Customer & status'],
     ['name', 'Customer', 'text', { req: 1 }], ['contact', 'Phone / email', 'text'],
     ['status', 'Status', 'select', { opts: STATUSES }], ['reason', 'Reason (if declined)', 'text'],
-    ['requested', 'Date requested', 'date'], ['due', 'Pickup / due date', 'date'],
+    ['#', 'Event & dates'],
     ['event', 'Event', 'text'], ['type', 'Event type', 'text', { list: 'types' }],
+    ['requested', 'Date requested', 'date'], ['due', 'Pickup / due date', 'date'],
+    ['kind', 'Custom / Premade', 'select', { opts: ['', 'Custom', 'Premade'] }], ['designs', '# of designs', 'number', { step: '1' }],
+    ['#', 'Pricing'],
     ['qty', '# of cookies', 'number', { step: '1' }], ['price', 'Price each ($)', 'number', { step: '0.01' }],
-    ['numColors', '# of colors', 'number', { step: '1' }], ['designs', '# of designs', 'number', { step: '1' }],
-    ['rush', 'Rush fee ($)', 'number', { step: '0.01' }], ['addOns', 'Add-ons', 'text'],
-    ['addOnsAmt', 'Add-ons amount ($)', 'number', { step: '0.01' }], ['amtDue', 'Amount due ($)', 'number', { step: '0.01' }],
+    ['numColors', '# of colors', 'number', { step: '1' }], ['rush', 'Rush fee ($)', 'number', { step: '0.01' }],
+    ['addOns', 'Add-ons', 'text'], ['addOnsAmt', 'Add-ons amount ($)', 'number', { step: '0.01' }],
+    ['amtDue', 'Amount due ($)', 'number', { step: '0.01' }],
+    ['#', 'Payment'],
     ['paid', 'Amount paid ($)', 'number', { step: '0.01' }], ['method', 'Payment method', 'text', { list: 'methods' }],
-    ['kind', 'Custom / Premade', 'select', { opts: ['', 'Custom', 'Premade'] }], ['colors', 'Special colors', 'text'],
-    ['allergies', 'Allergies', 'text'], ['notes', 'Notes', 'textarea', { wide: 1 }],
+    ['#', 'Details'],
+    ['colors', 'Special colors', 'text'], ['allergies', 'Allergies', 'text'],
+    ['notes', 'Notes', 'textarea', { wide: 1 }],
   ];
 
   function calc(o) {
@@ -328,6 +397,7 @@
     const types = [...new Set(S.vault.orders.map((x) => x.type).filter(Boolean))].sort();
     const dlg = $('#dlg');
     const fld = ([k, label, type, x = {}]) => {
+      if (k === '#') return `<h3 class="fh">${label}</h3>`;
       const v = o[k] ?? '';
       const cls = x.wide ? ' class="wide"' : '';
       if (type === 'select') return `<label${cls}>${label}<select name="${k}">${x.opts.map((s) => `<option${s === v ? ' selected' : ''}>${s}</option>`).join('')}</select></label>`;
@@ -355,6 +425,7 @@
     const read = () => {
       const out = {};
       for (const [k, , type] of FIELDS) {
+        if (k === '#') continue;
         const v = ef.elements[k].value;
         out[k] = type === 'number' ? (v === '' ? null : +v) : v.trim();
       }
@@ -647,6 +718,7 @@
       } catch (ex) { msg.className = 'err'; msg.textContent = 'Import failed: ' + (ex.message || ex); }
       return;
     }
+    if (t.id === 'csv') { exportCsv(); return; }
     if (t.id === 'backup') {
       const blob = new Blob([await seal()], { type: 'application/json' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `portal-backup-${todayISO()}.enc.json`; a.click();
@@ -654,7 +726,9 @@
   });
   document.addEventListener('change', (e) => {
     const t = e.target;
-    if (t.dataset.sid) { byId(t.dataset.sid).status = t.value; touch(); drawList(); }
+    if (t.dataset.sid) { byId(t.dataset.sid).status = t.value; touch(); render(); }
+    if (t.id === 'oyear') { S.oyear = t.value; render(); }
+    if (t.id === 'osort') { S.sort = t.value; render(); }
     if (t.id === 'year') { S.year = t.value; render(); }
     if (t.id === 'cal-done') { S.calDone = t.checked; render(); }
   });
