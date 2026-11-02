@@ -251,7 +251,8 @@
   function render() {
     document.querySelectorAll('#tabs button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === S.tab)));
     const main = $('#main');
-    ({ orders: viewOrders, calendar: viewCalendar, money: viewMoney, calculator: viewCalculator, workbook: viewWorkbook, settings: viewSettings }[S.tab])(main);
+    const views = { orders: viewOrders, calendar: viewCalendar, money: viewMoney, calculator: viewCalculator, workbook: viewWorkbook, settings: viewSettings };
+    (views[S.tab] || viewOrders)(main);
   }
 
   /* ---------- orders ---------- */
@@ -322,8 +323,8 @@
     return { parts, total: Math.round(parts.reduce((s, x) => s + x[1], 0) * 100) / 100, p };
   }
 
-  function openEdit(id) {
-    const o = id ? { ...byId(id) } : { status: 'Requested', requested: todayISO() };
+  function openEdit(id, prefill) {
+    const o = id ? { ...byId(id) } : { status: 'Requested', requested: todayISO(), ...(prefill || {}) };
     const types = [...new Set(S.vault.orders.map((x) => x.type).filter(Boolean))].sort();
     const dlg = $('#dlg');
     const fld = ([k, label, type, x = {}]) => {
@@ -389,31 +390,58 @@
   }
 
   /* ---------- calendar ---------- */
-  function viewCalendar(main) {
-    const today = todayISO();
-    const open = S.vault.orders.filter((o) => OPEN.includes(o.status));
-    const overdue = open.filter((o) => o.due && o.due < today).sort((a, b) => a.due.localeCompare(b.due));
-    const upcoming = open.filter((o) => o.due && o.due >= today).sort((a, b) => a.due.localeCompare(b.due));
-    const nodate = open.filter((o) => !o.due);
-    const ev = (o) => `<div class="ev" data-id="${o.id}">
+  const short = (n) => { const w = String(n).trim().split(/\s+/); return w.length > 1 ? `${w[0]} ${w[w.length - 1][0]}.` : w[0]; };
+  function evRow(o) {
+    return `<div class="ev" data-id="${o.id}">
       <span class="who">${esc(o.name)}</span><span>${esc(o.event || o.type || '')}</span>
       <span>${o.qty ?? '?'} cookies</span>${num(o.rush) > 0 ? '<span class="pill rush">rush</span>' : ''}
-      <span class="pill">${o.status}</span>
+      <span class="pill st-${o.status}">${o.status}</span>
       ${balance(o) > 0.005 && o.amtDue != null ? `<span class="neg">${money(balance(o))} due</span>` : ''}</div>`;
-    const groups = {};
-    upcoming.forEach((o) => (groups[o.due] ||= []).push(o));
-    const days = Object.keys(groups).map((d) => {
-      const diff = Math.round((new Date(d + 'T00:00') - new Date(today + 'T00:00')) / 864e5);
-      const rel = diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : `in ${diff} days`;
-      return `<div class="day">${esc(new Date(d + 'T00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))} <span class="muted small">· ${rel}</span></div>${groups[d].map(ev).join('')}`;
-    });
-    const cookies = upcoming.reduce((s, o) => s + num(o.qty), 0);
-    main.innerHTML = `<h2>Calendar</h2>
-      <div class="bar"><button class="btn small" data-new>+ New order</button>
-      <span class="muted">${upcoming.length} upcoming · ${cookies} cookies to bake</span></div>
-      ${overdue.length ? `<div class="day over">Overdue — past due date but not completed</div>${overdue.map(ev).join('')}` : ''}
-      ${days.join('') || '<p class="muted">Nothing scheduled. New orders with a due date show up here.</p>'}
-      ${nodate.length ? `<div class="day">No date yet</div>${nodate.map(ev).join('')}` : ''}`;
+  }
+  function viewCalendar(main) {
+    const now = new Date(), today = todayISO();
+    const c = S.cal || (S.cal = { y: now.getFullYear(), m: now.getMonth() });
+    const showDone = S.calDone !== false;
+    const first = new Date(c.y, c.m, 1), days = new Date(c.y, c.m + 1, 0).getDate(), lead = first.getDay();
+    const rows = Math.ceil((lead + days) / 7), mk = `${c.y}-${pad(c.m + 1)}`;
+    const key = (d) => `${mk}-${pad(d)}`;
+    const list = S.vault.orders.filter((o) => o.due && o.due.startsWith(mk) && o.status !== 'Declined' && (showDone || o.status !== 'Completed'));
+    const byDay = {};
+    list.forEach((o) => (byDay[o.due] ||= []).push(o));
+    if (!S.calDay || !S.calDay.startsWith(mk)) S.calDay = today.startsWith(mk) ? today : key(1);
+
+    let cells = '';
+    for (let i = 0; i < rows * 7; i++) {
+      const d = i - lead + 1;
+      if (d < 1 || d > days) { cells += '<div class="cd out"></div>'; continue; }
+      const date = key(d), ev = byDay[date] || [];
+      cells += `<div class="cd${date === today ? ' today' : ''}${date === S.calDay ? ' sel' : ''}" data-day="${date}">
+        <div class="dn"><span>${d}</span><button class="add" data-newdate="${date}" aria-label="New order on ${date}" title="New order">+</button></div>
+        ${ev.slice(0, 3).map((o) => `<button class="cev st-${o.status}" data-id="${o.id}" title="${esc(o.name)} — ${o.qty ?? '?'} cookies">${num(o.rush) > 0 ? '⚡' : ''}${esc(short(o.name))} <b>${o.qty ?? ''}</b></button>`).join('')}
+        ${ev.length > 3 ? `<span class="more">+${ev.length - 3} more</span>` : ''}</div>`;
+    }
+    const sel = (byDay[S.calDay] || []);
+    const open = S.vault.orders.filter((o) => OPEN.includes(o.status));
+    const attention = open.filter((o) => !o.due || o.due < today).sort((a, b) => (a.due || '').localeCompare(b.due || ''));
+    const cookies = list.reduce((s, o) => s + num(o.qty), 0), quoted = list.reduce((s, o) => s + num(o.amtDue), 0);
+
+    main.innerHTML = `<div class="cal-head">
+        <button class="btn ghost small" data-cal="prev" aria-label="Previous month">‹</button>
+        <h2>${first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h2>
+        <button class="btn ghost small" data-cal="next" aria-label="Next month">›</button>
+        <button class="btn ghost small" data-cal="today">Today</button>
+        <span class="sp"></span>
+        <label class="check"><input type="checkbox" id="cal-done"${showDone ? ' checked' : ''}> Show completed</label>
+        <button class="btn small" data-new>+ New order</button>
+      </div>
+      <p class="muted small">${list.length} orders · ${cookies.toLocaleString()} cookies · ${money(quoted)} quoted this month</p>
+      <div class="legend">${['Requested', 'Confirmed', 'Baking', 'Ready', 'Completed'].map((s) => `<span class="pill st-${s}">${s}</span>`).join('')} <span class="pill rush">⚡ rush</span></div>
+      <div class="cal" role="grid" aria-label="Orders by due date">
+        ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((w) => `<div class="wd">${w}</div>`).join('')}${cells}</div>
+      <div class="day">${esc(fmtDate(S.calDay))}${S.calDay === today ? ' · Today' : ''}
+        <button class="btn ghost small" data-newdate="${S.calDay}" style="margin-left:8px">+ Add order this day</button></div>
+      ${sel.length ? sel.map(evRow).join('') : '<p class="muted small">Nothing due this day.</p>'}
+      ${attention.length ? `<div class="day over">Needs attention — overdue or no date</div>${attention.map(evRow).join('')}` : ''}`;
   }
 
   /* ---------- money ---------- */
@@ -528,7 +556,9 @@
         <div class="total-row"><span>Charge</span><strong>${money(c.total)}</strong></div>
         <div class="hbar" style="grid-template-columns:1fr auto"><span class="muted">Est. ingredient cost</span><span>${money(costTotal)}</span></div>
         <div class="hbar" style="grid-template-columns:1fr auto"><span class="muted">Est. profit before time</span><span><b>${money(c.total - costTotal)}</b></span></div>
-        <div class="hbar" style="grid-template-columns:1fr auto"><span class="muted">Per cookie, all-in</span><span>${st.qty ? money(c.total / st.qty) : '—'}</span></div>`;
+        <div class="hbar" style="grid-template-columns:1fr auto"><span class="muted">Per cookie, all-in</span><span>${st.qty ? money(c.total / st.qty) : '—'}</span></div>
+        <button class="btn full" id="calc-make" type="button">Create order from this quote</button>`;
+      S.calcOut = { qty: st.qty, price: st.price, numColors: st.colors, rush: rush || null, addOnsAmt: st.addOns || null, amtDue: c.total };
     };
     $('#cf').addEventListener('input', draw);
     draw();
@@ -567,11 +597,22 @@
     if (t.closest('#tabs button')) { S.tab = t.closest('#tabs button').dataset.tab; render(); return; }
     if (t.id === 'lock') { if (S.dirty && !confirm('You have unsaved changes. Lock anyway?')) return; S.dirty = false; location.reload(); return; }
     if (t.closest('[data-new]')) { openEdit(null); return; }
+    if (t.closest('#calc-make')) { openEdit(null, S.calcOut); return; }
+    const nd = t.closest('[data-newdate]');
+    if (nd) { openEdit(null, { due: nd.dataset.newdate }); return; }
+    const nav = t.closest('[data-cal]');
+    if (nav) {
+      const now = new Date(), c = S.cal || (S.cal = { y: now.getFullYear(), m: now.getMonth() });
+      if (nav.dataset.cal === 'today') { S.cal = { y: now.getFullYear(), m: now.getMonth() }; S.calDay = todayISO(); }
+      else { c.m += nav.dataset.cal === 'next' ? 1 : -1; if (c.m < 0) { c.m = 11; c.y--; } if (c.m > 11) { c.m = 0; c.y++; } S.calDay = null; }
+      render(); return;
+    }
     const chip = t.closest('[data-f]');
     if (chip) { S.filter = chip.dataset.f; render(); return; }
     const ref = t.closest('[data-ref]');
     if (ref) { S.refSheet = ref.dataset.ref; render(); return; }
     const row = t.closest('[data-id]');
+    if (!row) { const dc = t.closest('[data-day]'); if (dc) { S.calDay = dc.dataset.day; render(); return; } }
     if (row && !t.closest('select') && !t.closest('#dlg')) { openEdit(row.dataset.id); return; }
     if (t.id === 'tok-save') {
       const v = $('#tok').value.trim(); if (!v) return;
@@ -615,6 +656,7 @@
     const t = e.target;
     if (t.dataset.sid) { byId(t.dataset.sid).status = t.value; touch(); drawList(); }
     if (t.id === 'year') { S.year = t.value; render(); }
+    if (t.id === 'cal-done') { S.calDone = t.checked; render(); }
   });
   document.addEventListener('input', (e) => { if (e.target.id === 'q') { S.q = e.target.value; drawList(); } });
 
