@@ -4,95 +4,30 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <title>Admin</title>
+  <title>Owner Portal</title>
   <link rel="stylesheet" href="styles.css">
-  <style>
-    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px 16px; font-family: system-ui, sans-serif; }
-    .login { max-width: 340px; margin: 60px auto; display: grid; gap: 12px; }
-    .login input { font: inherit; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
-    .err { color: #c0392b; min-height: 1.3em; }
-    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-    .tools { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
-    .tools input { flex: 1; max-width: 320px; font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
-    .tablebox { overflow: auto; max-height: 70vh; border: 1px solid var(--border); border-radius: 10px; }
-    table { border-collapse: collapse; width: 100%; font-size: .85rem; }
-    th, td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
-    thead th { position: sticky; top: 0; background: var(--alt); }
-    td.n { text-align: right; font-variant-numeric: tabular-nums; }
-  </style>
+  <link rel="stylesheet" href="portal.css">
 </head>
-<body>
-  <div class="wrap">
-    <form id="login" class="login">
-      <h1>🔒 Admin</h1>
-      <input id="user" placeholder="Username" autocomplete="username" required>
-      <input id="pw" type="password" placeholder="Password" autocomplete="current-password" required>
-      <button class="btn full" type="submit">Unlock</button>
-      <div class="err" id="err" role="alert"></div>
-      <p class="muted small">Data is encrypted in this site's files and decrypted only in your browser.</p>
-    </form>
+<body class="portal">
+  <div id="gate" class="gate"></div>
 
-    <section id="app" hidden>
-      <div class="tools">
-        <h1 style="margin:0">Business data</h1>
-        <button class="btn ghost" id="lock" type="button">Lock</button>
-      </div>
-      <div id="tabs" class="tabs"></div>
-      <div class="tools"><input id="q" type="search" placeholder="Search this sheet…"> <span id="count" class="muted small"></span></div>
-      <div class="tablebox"><table id="tbl"></table></div>
-    </section>
+  <div id="app" hidden>
+    <header class="p-head">
+      <strong class="p-title">🍪 Owner portal</strong>
+      <nav id="tabs" class="p-tabs" aria-label="Sections">
+        <button data-tab="orders">Orders</button>
+        <button data-tab="calendar">Calendar</button>
+        <button data-tab="money">Money</button>
+        <button data-tab="workbook">Workbook</button>
+        <button data-tab="settings">Settings</button>
+      </nav>
+      <span id="savestate" class="savestate" role="status"></span>
+      <button id="lock" class="btn ghost small-btn" type="button">Lock</button>
+    </header>
+    <main id="main" class="p-main"></main>
   </div>
 
-  <script>
-  (() => {
-    const $ = (id) => document.getElementById(id);
-    const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    let data = null, current = null;
-
-    async function decrypt(user, pw) {
-      const blob = await fetch('data/private.enc.json', { cache: 'no-store' }).then((r) => { if (!r.ok) throw new Error('nodata'); return r.json(); });
-      const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(`${user}:${pw}`), 'PBKDF2', false, ['deriveKey']);
-      const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: b64(blob.salt), iterations: blob.iter, hash: 'SHA-256' },
-        base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
-      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(blob.iv) }, key, b64(blob.data));
-      return JSON.parse(new TextDecoder().decode(plain));
-    }
-
-    function show(name) {
-      current = name;
-      [...$('tabs').children].forEach((b) => b.setAttribute('aria-selected', b.dataset.n === name));
-      $('q').value = '';
-      table();
-    }
-    function table() {
-      const rows = data[current], q = $('q').value.toLowerCase();
-      const body = rows.slice(1).filter((r) => !q || r.some((c) => String(c ?? '').toLowerCase().includes(q)));
-      const cell = (c) => typeof c === 'number'
-        ? `<td class="n">${Number.isInteger(c) ? c : Math.round(c * 100) / 100}</td>` : `<td>${esc(c)}</td>`;
-      $('tbl').innerHTML = `<thead><tr>${rows[0].map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>` +
-        `<tbody>${body.map((r) => `<tr>${r.map(cell).join('')}</tr>`).join('')}</tbody>`;
-      $('count').textContent = `${body.length} rows`;
-    }
-
-    $('login').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      $('err').textContent = '';
-      try {
-        data = await decrypt($('user').value.trim(), $('pw').value);
-      } catch (err) {
-        $('err').textContent = err.message === 'nodata' ? 'No data has been uploaded yet.' : 'Wrong username or password.';
-        return;
-      }
-      $('pw').value = '';
-      $('login').hidden = true; $('app').hidden = false;
-      $('tabs').innerHTML = Object.keys(data).map((n) => `<button class="chip" data-n="${esc(n)}" aria-selected="false">${esc(n)}</button>`).join('');
-      show(Object.keys(data)[0]);
-    });
-    $('tabs').addEventListener('click', (e) => { if (e.target.dataset.n) show(e.target.dataset.n); });
-    $('q').addEventListener('input', table);
-    $('lock').addEventListener('click', () => { data = null; location.reload(); });
-  })();
-  </script>
+  <dialog id="dlg"></dialog>
+  <script src="portal.js"></script>
 </body>
 </html>

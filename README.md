@@ -1,28 +1,26 @@
 # Gina's Cookie Jar
 
-Static site (no build step) for GitHub Pages: custom-cookie price estimator + order request via Facebook Messenger, plus a password-protected admin page for the business workbook.
+Static site (no build step) for GitHub Pages.
 
-## Edit the site
-`data/site.json`:
-- `messenger` — your Facebook page username (opens `m.me/<name>`) or a full link. Set this so the button opens Messenger.
-- `pricing.perCookie` — base price (default 4.35). Change it any time for discounts; other fees mirror the "Cookie Orders Calculator" sheet.
-- `occasions`, `about`, `phone`, `location`.
+- **Public site** (`index.html`): custom-cookie price estimator + order request via Facebook Messenger.
+- **Owner portal** (`admin.html`): private order tracking — orders and statuses, calendar, payments/balances, money dashboard, workbook reference sheets.
 
-## Private admin page (`/admin.html`)
-The workbook is **never** stored readable in the repo. Encrypt it locally, then commit only the encrypted file:
+## Public site settings
+`data/site.json`: `messenger` (Facebook page username → `m.me/<name>`), `pricing.perCookie` (default 4.35), `occasions`, `about`, `phone`, `location`.
 
-```bash
-pip install openpyxl cryptography
-python3 tools/encrypt_workbook.py Ginas_Cookie_Jar.xlsx   # asks for username + password
-```
+## Owner portal
+Data is stored **encrypted** in `data/portal.enc.json` (AES-256-GCM; key derived from your username+password with PBKDF2). It is encrypted/decrypted only in your browser and saved to GitHub through the API, so it syncs across devices.
 
-This writes `data/private.enc.json` (AES-256-GCM, key from PBKDF2). The admin page decrypts it in the browser.
-Use a long passphrase (12+ characters); anyone can download the encrypted file, so its strength is your password's strength. Re-run whenever the workbook changes. Do not commit the `.xlsx`.
+**First time:** open `/admin.html` → choose username + long password → import your `.xlsx` (parsed in your browser, never uploaded) → paste a GitHub token.
+**New device:** log in, then add the token in Settings (the token is stored only in that browser).
+
+Token: GitHub → Settings → Developer settings → Fine-grained tokens → only repo `momscookies` → Contents: Read and write.
+
+Forgot the password = the data cannot be recovered (use Settings → Download encrypted backup regularly, and keep the original workbook).
+
+`vendor/xlsx.full.min.js` is SheetJS (Apache-2.0), used for the one-time Excel import.
 
 ## Preview locally
 ```bash
 python3 -m http.server 8000
 ```
-
-## Publish
-Repo → Settings → Pages → Deploy from a branch → `main` / root.
