@@ -500,3 +500,14 @@ dialog::backdrop { background: rgba(30, 15, 8, .55); }
 .viewer label, .tagger label { display: grid; gap: 5px; font-size: .92rem; font-weight: 700; }
 .viewer input, .viewer select, .tagger input, .tagger select { width: 100%; }
 .pv-form { margin-top: 2px; }
+
+/* ----- drag and drop ----- */
+.ophotos { border: 2px dashed var(--border); border-radius: 14px; padding: 12px; transition: background .12s, border-color .12s; }
+.ophotos.drop-hot { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.orow.drop-hot { outline: 3px dashed var(--accent); outline-offset: -3px; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.p-main.drop-hot::after {
+  content: "Drop pictures to add them"; position: fixed; inset: 76px 14px 14px 14px; z-index: 40; display: grid; place-items: center; pointer-events: none;
+  font-size: 1.4rem; font-weight: 800; color: var(--accent-dark); text-align: center;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg)); border: 3px dashed var(--accent); border-radius: 22px;
+}
+@media (hover: none) { .drop-tip, .drop-hint { display: none; } }

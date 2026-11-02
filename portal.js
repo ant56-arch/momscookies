@@ -395,6 +395,7 @@
         <select id="osort" aria-label="Sort">${[['newest', 'Newest first'], ['oldest', 'Oldest first'], ['due', 'Due date'], ['total', 'Highest total'], ['name', 'Customer A–Z']].map(([v, l]) => `<option value="${v}"${S.sort === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
         <button class="btn ghost small" id="csv" type="button" title="Download the orders shown as a spreadsheet">Export CSV</button>
       </div>
+      <p class="muted small drop-tip">Tip: drag pictures from your computer onto any order below to attach them to it.</p>
       <div id="list" class="olist"></div>
       ${S.filter === 'Orders' ? `<p class="muted small">${count('Declined')} cancelled / no-order inquiries are hidden — see the Declined filter.</p>` : ''}`;
     drawList();
@@ -650,8 +651,9 @@
       const box = $('#ophotos'); if (!box) return;
       if (!id) { box.innerHTML = '<p class="muted small" style="margin:0">Save the order first, then you can add photos to it.</p>'; return; }
       const mine = photos().filter((x) => x.orderId === id);
+      box.dataset.oid = id; box._refresh = drawOrderPhotos;
       box.innerHTML = `${mine.length ? `<div class="pgrid small">${mine.map((x) => `<button type="button" class="ptile" data-pid="${x.id}" aria-label="Open photo"></button>`).join('')}</div>` : '<p class="muted small" style="margin:0 0 8px">No photos yet.</p>'}
-        <button type="button" class="btn ghost small" data-oadd>+ Add photos</button>${tok() ? '' : ' <span class="muted small">Add your GitHub token in Settings first.</span>'}`;
+        <button type="button" class="btn ghost small" data-oadd>+ Add photos</button> <span class="muted small drop-hint">or drag pictures here</span>${tok() ? '' : ' <span class="muted small">Add your GitHub token in Settings first.</span>'}`;
       lazyThumbs(box);
     };
     drawOrderPhotos();
@@ -844,6 +846,11 @@
   const occOptions = (sel) => `<option value="">— None —</option>${OCCASIONS.map(([n]) => `<option${n === sel ? ' selected' : ''}>${esc(n)}</option>`).join('')}`;
   const kindOptions = (sel) => PHOTO_KINDS.map(([v, l]) => `<option value="${v}"${v === sel ? ' selected' : ''}>${l}</option>`).join('');
 
+  function startUpload(files, preset, onDone) {
+    if (!tok()) { alert('Photos are saved to your GitHub repository, so add your GitHub token in Settings first.'); return; }
+    if (!files.length) { alert('Those files are not pictures. Please drop image files such as JPG or PNG.'); return; }
+    openUpload(files, preset, onDone);
+  }
   function pickPhotos(preset = {}, onDone) {
     if (!tok()) { alert('Photos are saved to your GitHub repository, so add your GitHub token in Settings first.'); return; }
     const inp = document.createElement('input');
@@ -858,6 +865,7 @@
     const g = ord ? occasionOf(ord) : null;
     dlg.innerHTML = `<form class="tagger" id="up" novalidate>
       <div class="tg-top"><h2 style="margin:0">Add ${plural(files.length, 'photo')}</h2></div>
+      ${ord ? `<p class="muted" style="margin:0">For <b>${esc(ord.name)}</b> · ${esc(fmtDate(ord.due || ord.requested)) || 'No date'}${ord.event ? ' · ' + esc(ord.event) : ''}</p>` : ''}
       <div class="fgrid">
         <label>Type<select name="kind">${kindOptions('finished')}</select></label>
         <label>Occasion<select name="occasion">${occOptions(g && g.name !== 'Not set' ? g.name : '')}</select></label>
@@ -894,7 +902,7 @@
           photos().push({ id, kind, orderId, occasion, caption: String(fd.get('caption') || '').trim(), date: isoDate(new Date(f.lastModified || Date.now())), w: full.w, h: full.h, added: todayISO() });
           touch(); ok++;
           st.textContent = 'Done ✓';
-        } catch (err) { st.textContent = 'Failed: ' + (err.message || err); st.classList.add('neg'); }
+        } catch (err) { st.textContent = /heic|heif/i.test(f.type + f.name) ? 'This browser cannot read HEIC photos. Please use JPG or PNG.' : 'Failed: ' + (err.message || err); st.classList.add('neg'); }
       }
       busy = false;
       const done = form.querySelector('.actions');
@@ -992,7 +1000,7 @@
           ${x.kind === 'inspiration' ? '<span class="ptag" title="Inspiration">💡</span>' : ''}
           <span class="pcap">${o ? `<b>${esc(o.name)}</b>` : ''}${x.caption ? `<span>${esc(x.caption)}</span>` : x.occasion ? `<span>${esc(x.occasion)}</span>` : ''}</span></button>`;
       }).join('') : `<div class="empty"><div style="font-size:2.4rem">📷</div><p><b>${all.length ? 'No photos match these filters.' : 'No photos yet.'}</b></p>
-          <p class="muted">${all.length ? 'Try clearing the search or filters.' : 'Add pictures of your finished cookies, or inspiration pictures that customers send you.'}</p></div>`;
+          <p class="muted">${all.length ? 'Try clearing the search or filters.' : 'Add pictures of your finished cookies, or inspiration pictures that customers send you. You can also drag pictures onto this page.'}</p></div>`;
       lazyThumbs(grid);
       grid.onclick = (e) => { const t = e.target.closest('[data-pid]'); if (t) { const ids = list.map((x) => x.id); openViewer(ids, ids.indexOf(t.dataset.pid)); } };
     };
@@ -1000,6 +1008,43 @@
     draw();
   }
   let drawPhotoGrid = () => {};
+
+  // ---------- drag and drop (pictures from your computer) ----------
+  const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+  const imageFiles = (dt) => [...dt.files].filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(f.name));
+  let hotEl = null;
+  const setHot = (el) => { if (hotEl === el) return; if (hotEl) hotEl.classList.remove('drop-hot'); hotEl = el; if (el) el.classList.add('drop-hot'); };
+  function dropZone(target) {
+    if (!(target instanceof Element)) return null;
+    const editor = target.closest('#ophotos[data-oid]');
+    if (editor) return { el: editor, preset: { orderId: editor.dataset.oid }, done: editor._refresh };
+    if (target.closest('dialog')) return null;
+    const row = target.closest('.orow[data-id]');
+    if (row && S.tab === 'orders') return { el: row, preset: { orderId: row.dataset.id } };
+    if (S.tab === 'photos' && target.closest('#main')) return { el: $('#main'), preset: {} };
+    return null;
+  }
+  ['dragenter', 'dragover'].forEach((ev) => window.addEventListener(ev, (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); // also stops the browser from opening the dropped file
+    const z = dropZone(e.target);
+    setHot(z ? z.el : null);
+    e.dataTransfer.dropEffect = z ? 'copy' : 'none';
+  }));
+  window.addEventListener('dragleave', (e) => {
+    if (!hotEl) return;
+    if (!e.relatedTarget) { setHot(null); return; }
+    const z = dropZone(e.relatedTarget);
+    if (!z || z.el !== hotEl) setHot(null);
+  });
+  window.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    const z = dropZone(e.target);
+    setHot(null);
+    if (!z) return;
+    startUpload(imageFiles(e.dataTransfer), z.preset, z.done);
+  });
 
   /* ---------- revenue by occasion ---------- */
   function occasionSection(year) {
