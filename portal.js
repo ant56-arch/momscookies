@@ -52,7 +52,7 @@
 
   const S = {
     key: null, salt: null, iter: 600000, sha: null, vault: null, site: null,
-    tab: 'home', filter: 'Orders', oyear: 'All', sort: 'newest', q: '', year: null, refSheet: null, dirty: false,
+    pKind: 'all', pOcc: '', pYear: 'All', pq: '', tab: 'home', filter: 'Orders', oyear: 'All', sort: 'newest', q: '', year: null, refSheet: null, dirty: false,
   };
 
   /* ---------- crypto ---------- */
@@ -110,6 +110,79 @@
     return r.json();
   }
 
+  // ---------- photos: private, encrypted storage ----------
+  const PHOTO_DIR = 'data/photos';
+  const apiBase = `https://api.github.com/repos/${CFG.owner}/${CFG.repo}/contents/`;
+  let ghChain = Promise.resolve();
+  const withLock = (fn) => { const run = ghChain.then(fn); ghChain = run.catch(() => {}); return run; }; // GitHub needs writes one at a time
+  function bytesToB64(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
+  async function encBytes(u8) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, S.key, u8));
+    const out = new Uint8Array(12 + ct.length); out.set(iv); out.set(ct, 12); return out;
+  }
+  const decBytes = async (u8) => new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: u8.slice(0, 12) }, S.key, u8.slice(12)));
+  async function ghPutFile(path, u8) {
+    const r = await fetch(apiBase + path, { method: 'PUT', headers: { ...hdr(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'Add photo', content: bytesToB64(u8), branch: CFG.branch }) });
+    if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? 'Token rejected' : 'GitHub ' + r.status);
+  }
+  async function ghDeleteFile(path) {
+    const m = await fetch(`${apiBase}${path}?ref=${CFG.branch}&t=${Date.now()}`, { headers: hdr(), cache: 'no-store' });
+    if (m.status === 404) return;
+    if (!m.ok) throw new Error('GitHub ' + m.status);
+    const { sha } = await m.json();
+    const r = await fetch(apiBase + path, { method: 'DELETE', headers: { ...hdr(), 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'Remove photo', sha, branch: CFG.branch }) });
+    if (!r.ok && r.status !== 404) throw new Error('GitHub ' + r.status);
+  }
+  const photoCache = new Map();
+  function photoUrl(id, kind) {
+    const key = id + kind;
+    if (!photoCache.has(key)) {
+      photoCache.set(key, (async () => {
+        const path = `${PHOTO_DIR}/${id}.${kind}.bin`;
+        let bytes;
+        if (tok()) {
+          const r = await fetch(`${apiBase}${path}?ref=${CFG.branch}&t=${Date.now()}`, { headers: { Authorization: `Bearer ${tok()}`, Accept: 'application/vnd.github.raw+json' }, cache: 'no-store' });
+          if (r.ok) bytes = new Uint8Array(await r.arrayBuffer());
+        }
+        if (!bytes) {
+          const r = await fetch(`${path}?t=${Date.now()}`, { cache: 'no-store' });
+          if (!r.ok) throw new Error('missing');
+          bytes = new Uint8Array(await r.arrayBuffer());
+        }
+        return URL.createObjectURL(new Blob([await decBytes(bytes)], { type: 'image/jpeg' }));
+      })().catch((e) => { photoCache.delete(key); throw e; }));
+    }
+    return photoCache.get(key);
+  }
+  let loadActive = 0; const loadWaiting = [];
+  const limitLoad = (fn) => new Promise((res, rej) => {
+    const run = () => { loadActive++; fn().then(res, rej).finally(() => { loadActive--; const n = loadWaiting.shift(); if (n) n(); }); };
+    loadActive < 4 ? run() : loadWaiting.push(run);
+  });
+  function lazyThumbs(root) {
+    const load = (el) => limitLoad(() => photoUrl(el.dataset.pid, 't')).then((u) => { el.style.backgroundImage = `url("${u}")`; el.classList.add('loaded'); }).catch(() => el.classList.add('missing'));
+    if (!('IntersectionObserver' in window)) { root.querySelectorAll('[data-pid]').forEach(load); return; }
+    const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { io.unobserve(e.target); load(e.target); } }), { rootMargin: '200px' });
+    root.querySelectorAll('[data-pid]').forEach((el) => io.observe(el));
+  }
+  async function makeVersions(file) {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const jpeg = (max, q) => {
+      const r = Math.min(1, max / Math.max(bmp.width, bmp.height)), w = Math.max(1, Math.round(bmp.width * r)), h = Math.max(1, Math.round(bmp.height * r));
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+      return new Promise((res) => c.toBlob((b) => res({ blob: b, w, h }), 'image/jpeg', q));
+    };
+    const full = await jpeg(1600, 0.82), thumb = await jpeg(480, 0.72);
+    bmp.close && bmp.close();
+    return { full, thumb };
+  }
+  const photos = () => (S.vault.photos ||= []);
+  const photoCount = (orderId) => photos().filter((p) => p.orderId === orderId).length;
+  const photoById = (id) => photos().find((p) => p.id === id);
+
   let saving = false, again = false, timer = null;
   function setSave(state) {
     const el = $('#savestate'); if (!el) return;
@@ -134,7 +207,7 @@
     try {
       const text = await seal();
       if (!S.sha) { const g = await ghGet(); S.sha = g ? g.sha : undefined; }
-      S.sha = await ghPut(text, S.sha);
+      S.sha = await withLock(() => ghPut(text, S.sha));
       S.dirty = false; setSave('saved');
     } catch (e) {
       setSave(e.conflict ? 'conflict' : e.auth ? 'auth' : 'error');
@@ -282,11 +355,11 @@
 
   /* ---------- tabs ---------- */
   function render() {
-    const moreSet = ['more', 'calculator', 'workbook', 'settings'];
+    const moreSet = ['more', 'photos', 'calculator', 'workbook', 'settings'];
     document.querySelectorAll('#tabs button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === S.tab)));
     document.querySelectorAll('#bottomnav button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === S.tab || (b.dataset.tab === 'more' && moreSet.includes(S.tab)))));
     const main = $('#main');
-    const views = { home: viewHome, more: viewMore, orders: viewOrders, calendar: viewCalendar, money: viewMoney, calculator: viewCalculator, workbook: viewWorkbook, settings: viewSettings };
+    const views = { home: viewHome, more: viewMore, photos: viewPhotos, orders: viewOrders, calendar: viewCalendar, money: viewMoney, calculator: viewCalculator, workbook: viewWorkbook, settings: viewSettings };
     (views[S.tab] || viewHome)(main);
   }
 
@@ -354,7 +427,7 @@
     const bal = balance(o), dec = o.status === 'Declined';
     return `<div class="orow st-${o.status}" data-id="${o.id}">
       <span class="c-due">${esc(fmtDate(o.due)) || '<span class="muted">No date</span>'}</span>
-      <span class="c-name"><b>${esc(o.name)}</b>${num(o.rush) > 0 ? ' <span class="pill rush">⚡ Rush</span>' : ''}${o.allergies ? ` <span class="pill warn" title="${esc(o.allergies)}">⚠ ${esc(o.allergies)}</span>` : ''}
+      <span class="c-name"><b>${esc(o.name)}</b>${photoCount(o.id) ? ` <span class="pill" title="Photos">📷 ${photoCount(o.id)}</span>` : ''}${num(o.rush) > 0 ? ' <span class="pill rush">⚡ Rush</span>' : ''}${o.allergies ? ` <span class="pill warn" title="${esc(o.allergies)}">⚠ ${esc(o.allergies)}</span>` : ''}
         <small>${esc(dec ? o.reason : (o.event || o.type))}</small></span>
       <span class="c-qty">${dec || o.qty == null ? '' : o.qty}</span>
       <span class="c-total">${dec || o.amtDue == null ? '' : money(o.amtDue)}</span>
@@ -441,6 +514,8 @@
     ['#', 'Details'],
     ['colors', 'Special colors', 'text'], ['allergies', 'Allergies', 'text'],
     ['notes', 'Notes', 'textarea', { wide: 1 }],
+    ['#', 'Photos'],
+    ['@photos', '', 'photos'],
   ];
 
   function calc(o) {
@@ -463,6 +538,7 @@
     const fld = ([k, label, type, x = {}]) => {
       if (k === '#') return `<h3 class="fh">${label}</h3>`;
       if (x.hide) return '';
+      if (k === '@photos') return '<div class="ophotos wide" id="ophotos"></div>';
       if (k === '@pay') return '<div class="paybox wide" id="paybox"><div class="paysum" id="paysum"></div><div class="paylist" id="paylist"></div><div class="payact" id="payact"></div><div class="muted small" id="pay-msg" role="status"></div></div>';
       const v = o[k] ?? '';
       const cls = x.wide ? ' class="wide"' : '';
@@ -496,7 +572,7 @@
     const read = () => {
       const out = {};
       for (const [k, , type, x = {}] of FIELDS) {
-        if (k === '#' || k === '@pay' || x.hide) continue;
+        if (k[0] === '#' || k[0] === '@' || x.hide) continue;
         const v = ef.elements[k].value;
         out[k] = type === 'number' ? (v === '' ? null : +v) : v.trim();
       }
@@ -569,10 +645,26 @@
       const del = t.closest('[data-pdel]');
       if (del) { pays.splice(+del.dataset.pdel, 1); persist(); drawRows(); drawSum(); render(); }
     });
+    // ----- photos on this order -----
+    const drawOrderPhotos = () => {
+      const box = $('#ophotos'); if (!box) return;
+      if (!id) { box.innerHTML = '<p class="muted small" style="margin:0">Save the order first, then you can add photos to it.</p>'; return; }
+      const mine = photos().filter((x) => x.orderId === id);
+      box.innerHTML = `${mine.length ? `<div class="pgrid small">${mine.map((x) => `<button type="button" class="ptile" data-pid="${x.id}" aria-label="Open photo"></button>`).join('')}</div>` : '<p class="muted small" style="margin:0 0 8px">No photos yet.</p>'}
+        <button type="button" class="btn ghost small" data-oadd>+ Add photos</button>${tok() ? '' : ' <span class="muted small">Add your GitHub token in Settings first.</span>'}`;
+      lazyThumbs(box);
+    };
+    drawOrderPhotos();
+    $('#ophotos').addEventListener('click', (e) => {
+      if (e.target.closest('[data-oadd]')) { pickPhotos({ orderId: id }, drawOrderPhotos); return; }
+      const t = e.target.closest('[data-pid]');
+      if (t) { const ids = photos().filter((x) => x.orderId === id).map((x) => x.id); openViewer(ids, ids.indexOf(t.dataset.pid), drawOrderPhotos); }
+    });
     $('#b-cancel').onclick = () => dlg.close();
     if (id) $('#b-del').onclick = () => {
       if (!confirm(`Delete the order for ${o.name}? This can't be undone.`)) return;
       S.vault.orders = S.vault.orders.filter((x) => x.id !== id);
+      photos().forEach((ph) => { if (ph.orderId === id) ph.orderId = null; });
       dlg.close(); touch(); render();
     };
     ef.addEventListener('submit', (e) => {
@@ -635,6 +727,7 @@
   function viewMore(main) {
     const card = (tab, icon, title, text) => `<button class="linkcard" data-tab="${tab}"><span class="emo">${icon}</span><b>${title}</b><span class="muted">${text}</span></button>`;
     main.innerHTML = `<h2>More</h2><div class="linkcards">
+      ${card('photos', '📷', 'Photos', 'Your cookie photos and inspiration')}
       ${card('calculator', '🧮', 'Price calculator', 'Quote a set of cookies')}
       ${card('workbook', '📒', 'Workbook', 'Recipe and cost sheets')}
       ${card('settings', '⚙️', 'Settings', 'Saving, password, import, backup')}
@@ -742,6 +835,172 @@
         <text x="${x + bw / 2}" y="${H - 9}">${esc(it.l)}</text>`;
     }).join('')}</svg>`;
   }
+  /* ---------- photos ---------- */
+  const PHOTO_KINDS = [['finished', 'My work'], ['inspiration', 'Inspiration']];
+  const newestFirst = (a, b) => (b.due || b.requested || '').localeCompare(a.due || a.requested || '');
+  const orderLabel = (o) => `${o.name} · ${fmtDate(o.due || o.requested) || 'No date'}${o.event ? ' · ' + o.event : ''}`;
+  const orderOptions = (sel, extra) => `<option value="">— None —</option>${S.vault.orders.filter((o) => o.status !== 'Declined' || o.id === sel).sort(newestFirst)
+    .map((o) => `<option value="${o.id}"${o.id === sel ? ' selected' : ''}>${esc(orderLabel(o))}</option>`).join('')}`;
+  const occOptions = (sel) => `<option value="">— None —</option>${OCCASIONS.map(([n]) => `<option${n === sel ? ' selected' : ''}>${esc(n)}</option>`).join('')}`;
+  const kindOptions = (sel) => PHOTO_KINDS.map(([v, l]) => `<option value="${v}"${v === sel ? ' selected' : ''}>${l}</option>`).join('');
+
+  function pickPhotos(preset = {}, onDone) {
+    if (!tok()) { alert('Photos are saved to your GitHub repository, so add your GitHub token in Settings first.'); return; }
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true; inp.hidden = true;
+    inp.onchange = () => { const files = [...inp.files].filter((f) => f.type.startsWith('image/')); inp.remove(); if (files.length) openUpload(files, preset, onDone); };
+    document.body.appendChild(inp);
+    inp.click();
+  }
+
+  function openUpload(files, preset, onDone) {
+    const dlg = $('#dlg2'), ord = preset.orderId ? byId(preset.orderId) : null;
+    const g = ord ? occasionOf(ord) : null;
+    dlg.innerHTML = `<form class="tagger" id="up" novalidate>
+      <div class="tg-top"><h2 style="margin:0">Add ${plural(files.length, 'photo')}</h2></div>
+      <div class="fgrid">
+        <label>Type<select name="kind">${kindOptions('finished')}</select></label>
+        <label>Occasion<select name="occasion">${occOptions(g && g.name !== 'Not set' ? g.name : '')}</select></label>
+        <label class="wide">Customer or order<select name="orderId"${ord ? ' disabled' : ''}>${orderOptions(preset.orderId || '')}</select></label>
+        <label class="wide">Caption (optional)<input name="caption" placeholder="For example, pink floral set"></label>
+      </div>
+      <div class="up-list">${files.map((f, i) => `<div class="up-row" data-i="${i}"><span>${esc(f.name)}</span><span class="muted small" data-st>Waiting</span></div>`).join('')}</div>
+      <div class="actions"><button class="btn" type="submit" id="up-go">Upload</button><button class="btn ghost" type="button" data-x>Cancel</button></div></form>`;
+    const form = $('#up');
+    let busy = false;
+    form.onclick = (e) => { if (e.target.closest('[data-x]') && !busy) dlg.close(); };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form); // read before locking the fields (disabled fields are not included)
+      busy = true; form.querySelectorAll('select,input,button').forEach((x) => (x.disabled = true));
+      const kind = fd.get('kind') || 'finished'; const orderId = ord ? ord.id : fd.get('orderId') || null;
+      let occasion = fd.get('occasion') || '';
+      const linked = orderId ? byId(orderId) : null;
+      if (!occasion && linked) { const o2 = occasionOf(linked); if (o2.name !== 'Not set') occasion = o2.name; }
+      let ok = 0;
+      for (let i = 0; i < files.length; i++) {
+        const st = form.querySelector(`.up-row[data-i="${i}"] [data-st]`), f = files[i];
+        try {
+          st.textContent = 'Resizing…';
+          const { full, thumb } = await makeVersions(f);
+          st.textContent = 'Encrypting…';
+          const id = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+          const fb = await encBytes(new Uint8Array(await full.blob.arrayBuffer())), tb = await encBytes(new Uint8Array(await thumb.blob.arrayBuffer()));
+          st.textContent = 'Uploading…';
+          await withLock(() => ghPutFile(`${PHOTO_DIR}/${id}.f.bin`, fb));
+          await withLock(() => ghPutFile(`${PHOTO_DIR}/${id}.t.bin`, tb));
+          photoCache.set(id + 'f', Promise.resolve(URL.createObjectURL(full.blob)));
+          photoCache.set(id + 't', Promise.resolve(URL.createObjectURL(thumb.blob)));
+          photos().push({ id, kind, orderId, occasion, caption: String(fd.get('caption') || '').trim(), date: isoDate(new Date(f.lastModified || Date.now())), w: full.w, h: full.h, added: todayISO() });
+          touch(); ok++;
+          st.textContent = 'Done ✓';
+        } catch (err) { st.textContent = 'Failed: ' + (err.message || err); st.classList.add('neg'); }
+      }
+      busy = false;
+      const done = form.querySelector('.actions');
+      done.innerHTML = `<span class="${ok === files.length ? 'ok' : 'neg'}">${ok === files.length ? `✓ ${plural(ok, 'photo')} added` : `${ok} of ${files.length} added`}</span><button class="btn" type="button" data-x>Close</button>`;
+      if (ok === files.length) setTimeout(() => { if (dlg.open) dlg.close(); }, 900);
+    };
+    dlg.onclose = () => { dlg.onclose = null; if (onDone) onDone(); render(); };
+    dlg.showModal();
+  }
+
+  function openViewer(ids, index, onClose) {
+    const dlg = $('#dlg2');
+    ids = [...ids];
+    let i = Math.max(0, index);
+    const draw = () => {
+      const ph = photoById(ids[i]);
+      if (!ph) { dlg.close(); return; }
+      dlg.innerHTML = `<div class="viewer" id="pv">
+        <div class="pv-top"><span class="muted">${i + 1} of ${ids.length}</span><span style="flex:1"></span><button class="btn ghost small" data-dl>Download</button><button class="btn small" data-x>Close</button></div>
+        <div class="pv-stage"><button class="pv-nav" data-prev aria-label="Previous photo"${i ? '' : ' disabled'}>‹</button>
+          <div class="pv-box"><img id="pv-img" alt="${esc(ph.caption || 'Cookie photo')}"><div class="pv-load" id="pv-load">Loading…</div></div>
+          <button class="pv-nav" data-next aria-label="Next photo"${i < ids.length - 1 ? '' : ' disabled'}>›</button></div>
+        <div class="fgrid pv-form">
+          <label>Type<select name="kind">${kindOptions(ph.kind)}</select></label>
+          <label>Occasion<select name="occasion">${occOptions(ph.occasion)}</select></label>
+          <label>Date<input type="date" name="date" value="${esc(ph.date)}"></label>
+          <label class="wide">Customer or order<select name="orderId">${orderOptions(ph.orderId || '')}</select></label>
+          <label class="wide">Caption<input name="caption" value="${esc(ph.caption)}" placeholder="Add a caption"></label>
+        </div>
+        <div class="actions"><button class="btn danger small" data-del>Delete photo</button>${ph.orderId && byId(ph.orderId) ? '<button class="btn ghost small" data-openorder>Open order</button>' : ''}</div></div>`;
+      const img = $('#pv-img');
+      photoUrl(ph.id, 't').then((u) => { if (!img.dataset.full && ids[i] === ph.id) img.src = u; }).catch(() => {});
+      photoUrl(ph.id, 'f').then((u) => { if (ids[i] === ph.id) { img.dataset.full = '1'; img.src = u; const l = $('#pv-load'); if (l) l.remove(); } })
+        .catch(() => { const l = $('#pv-load'); if (l) l.textContent = 'Could not load this photo.'; });
+    };
+    const go = (d) => { const n = i + d; if (n >= 0 && n < ids.length) { i = n; draw(); } };
+    dlg.onclick = async (e) => {
+      const t = e.target, ph = photoById(ids[i]);
+      if (!ph) return;
+      if (t.closest('[data-x]')) { dlg.close(); return; }
+      if (t.closest('[data-prev]')) { go(-1); return; }
+      if (t.closest('[data-next]')) { go(1); return; }
+      if (t.closest('[data-dl]')) {
+        const u = await photoUrl(ph.id, 'f').catch(() => null); if (!u) return;
+        const a = document.createElement('a'); a.href = u; a.download = `cookies-${(ph.caption || ph.id).replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.jpg`; a.click(); return;
+      }
+      if (t.closest('[data-openorder]')) { const oid = ph.orderId; dlg.onclick = null; dlg.onclose = null; dlg.close(); $('#dlg').close?.(); S.tab = 'orders'; render(); openEdit(oid); return; }
+      if (t.closest('[data-del]')) {
+        if (!confirm('Delete this photo? This cannot be undone.')) return;
+        const id = ph.id;
+        S.vault.photos = photos().filter((x) => x.id !== id); ids.splice(i, 1); touch();
+        if (tok()) withLock(() => ghDeleteFile(`${PHOTO_DIR}/${id}.f.bin`)).then(() => withLock(() => ghDeleteFile(`${PHOTO_DIR}/${id}.t.bin`))).catch(() => {});
+        photoCache.delete(id + 'f'); photoCache.delete(id + 't');
+        if (!ids.length) { dlg.close(); return; }
+        i = Math.min(i, ids.length - 1); draw();
+      }
+    };
+    dlg.onchange = (e) => {
+      const ph = photoById(ids[i]), f = e.target.name; if (!ph || !f) return;
+      if (f === 'orderId') {
+        ph.orderId = e.target.value || null;
+        const lo = ph.orderId ? byId(ph.orderId) : null;
+        if (lo && !ph.occasion) { const o2 = occasionOf(lo); if (o2.name !== 'Not set') ph.occasion = o2.name; }
+        touch(); draw(); return;
+      }
+      ph[f] = e.target.value.trim ? e.target.value.trim() : e.target.value; touch();
+    };
+    dlg.onkeydown = (e) => { if (e.key === 'ArrowLeft') go(-1); if (e.key === 'ArrowRight') go(1); };
+    dlg.onclose = () => { dlg.onclick = null; dlg.onchange = null; dlg.onkeydown = null; dlg.onclose = null; if (onClose) onClose(); render(); };
+    draw();
+    dlg.showModal();
+  }
+
+  function viewPhotos(main) {
+    const all = photos();
+    const years = [...new Set(all.map((x) => (x.date || '').slice(0, 4)).filter(Boolean))].sort().reverse();
+    const mine = all.filter((x) => x.kind === 'finished').length, insp = all.length - mine;
+    const chip = (k, l, c) => `<button class="chip" data-pk="${k}" aria-selected="${S.pKind === k}">${l} (${c})</button>`;
+    main.innerHTML = `<h2>Photos</h2>
+      ${tok() ? '' : '<div class="notice">Photos are saved to your GitHub repository, so add your token in <button class="linkbtn" data-tab="settings">Settings</button> before uploading. You can still look at photos that are already saved.</div>'}
+      <div class="bar"><button class="btn small" data-photoadd>+ Add photos</button><input class="grow" id="pq" type="search" placeholder="Search captions and customers…" value="${esc(S.pq)}"></div>
+      <div class="bar">${chip('all', 'All', all.length)}${chip('finished', 'My work', mine)}${chip('inspiration', 'Inspiration', insp)}<span class="sp"></span>
+        <select id="p-occ" aria-label="Occasion"><option value="">All occasions</option>${OCCASIONS.map(([n]) => `<option${S.pOcc === n ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
+        <select id="p-year" aria-label="Year"><option value="All">All years</option>${years.map((y) => `<option${S.pYear === y ? ' selected' : ''}>${y}</option>`).join('')}</select></div>
+      <div id="pgrid" class="pgrid"></div>`;
+    const draw = () => {
+      const q = S.pq.toLowerCase();
+      const list = all.filter((x) => (S.pKind === 'all' || x.kind === S.pKind) && (!S.pOcc || x.occasion === S.pOcc) && (S.pYear === 'All' || (x.date || '').startsWith(S.pYear))
+        && (!q || [x.caption, x.occasion, (byId(x.orderId) || {}).name].join(' ').toLowerCase().includes(q)))
+        .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.added || '').localeCompare(a.added || ''));
+      const grid = $('#pgrid');
+      grid.innerHTML = list.length ? list.map((x) => {
+        const o = byId(x.orderId);
+        return `<button class="ptile" data-pid="${x.id}" aria-label="${esc(x.caption || (o && o.name) || 'Photo')}">
+          ${x.kind === 'inspiration' ? '<span class="ptag" title="Inspiration">💡</span>' : ''}
+          <span class="pcap">${o ? `<b>${esc(o.name)}</b>` : ''}${x.caption ? `<span>${esc(x.caption)}</span>` : x.occasion ? `<span>${esc(x.occasion)}</span>` : ''}</span></button>`;
+      }).join('') : `<div class="empty"><div style="font-size:2.4rem">📷</div><p><b>${all.length ? 'No photos match these filters.' : 'No photos yet.'}</b></p>
+          <p class="muted">${all.length ? 'Try clearing the search or filters.' : 'Add pictures of your finished cookies, or inspiration pictures that customers send you.'}</p></div>`;
+      lazyThumbs(grid);
+      grid.onclick = (e) => { const t = e.target.closest('[data-pid]'); if (t) { const ids = list.map((x) => x.id); openViewer(ids, ids.indexOf(t.dataset.pid)); } };
+    };
+    drawPhotoGrid = draw;
+    draw();
+  }
+  let drawPhotoGrid = () => {};
+
   /* ---------- revenue by occasion ---------- */
   function occasionSection(year) {
     const scope = S.occScope || 'year';
@@ -1088,7 +1347,7 @@
         <p class="muted small">Fixes capitalization and extra spaces in names, event names, colors and notes. For example, “baby shower/reveal” becomes “Baby Shower/Reveal”. You can review every change first.</p>
         ${tidyChanges().length ? `<button class="btn ghost small" data-tidytext>Review ${plural(tidyChanges().length, 'change')}</button>` : '<p class="ok">✓ Everything looks tidy.</p>'}</div>
       <div class="panel help" style="margin-top:16px"><h3>Backup</h3>
-        <p class="muted small">Download an encrypted copy of everything (needs your login to open).</p>
+        <p class="muted small">Download an encrypted copy of your orders and settings (needs your login to open). Photos are stored separately in your repository, also encrypted, so they are not part of this download.</p>
         <button class="btn ghost small" id="backup">Download encrypted backup</button></div>`;
   }
 
@@ -1105,6 +1364,9 @@
     if (t.id === 'lock' || t.closest('#lock-more')) { if (S.dirty && !confirm('You have unsaved changes. Lock anyway?')) return; S.dirty = false; location.reload(); return; }
     if (t.closest('[data-new]')) { openEdit(null); return; }
     if (t.closest('[data-tag]')) { openTagger(); return; }
+    if (t.closest('[data-photoadd]')) { pickPhotos({}); return; }
+    const pk = t.closest('[data-pk]');
+    if (pk) { S.pKind = pk.dataset.pk; render(); return; }
     if (t.closest('[data-tidytext]')) { openTidyText(); return; }
     if (t.closest('[data-check]')) { openLabelCheck(); return; }
     const osc = t.closest('[data-occscope]');
@@ -1153,7 +1415,7 @@
       msg.textContent = 'Importing…';
       try {
         const d = await importWorkbook(f);
-        S.vault.orders = d.orders; S.vault.ref = d.ref; touch();
+        S.vault.orders = d.orders; S.vault.ref = d.ref; photos().forEach((ph) => (ph.orderId = null)); touch();
         msg.className = 'ok'; msg.textContent = `Imported ${plural(d.orders.length, 'order')}.`;
         setTimeout(render, 1200);
       } catch (ex) { msg.className = 'err'; msg.textContent = 'Import failed: ' + (ex.message || ex); }
@@ -1171,12 +1433,17 @@
     if (t.id === 'oyear') { S.oyear = t.value; render(); }
     if (t.id === 'osort') { S.sort = t.value; render(); }
     if (t.id === 'year') { S.year = t.value; render(); }
+    if (t.id === 'p-occ') { S.pOcc = t.value; drawPhotoGrid(); return; }
+    if (t.id === 'p-year') { S.pYear = t.value; drawPhotoGrid(); return; }
     if (t.id === 'cal-done') { S.calDone = t.checked; render(); }
     if (t.id === 'cal-month' || t.id === 'cal-year') {
       S.cal = { y: +$('#cal-year').value, m: +$('#cal-month').value }; S.calDay = null; render();
     }
   });
-  document.addEventListener('input', (e) => { if (e.target.id === 'q') { S.q = e.target.value; drawList(); } });
+  document.addEventListener('input', (e) => {
+    if (e.target.id === 'q') { S.q = e.target.value; drawList(); }
+    if (e.target.id === 'pq') { S.pq = e.target.value; drawPhotoGrid(); }
+  });
 
   showGate();
 })();

@@ -16,6 +16,8 @@ Data is stored **encrypted** in `data/portal.enc.json` (AES-256-GCM; key derived
 
 Token: GitHub → Settings → Developer settings → Fine-grained tokens → only repo `momscookies` → Contents: Read and write.
 
+**Photos:** resized in your browser, encrypted with the same key, and saved as `data/photos/*.bin` through the GitHub API (so a token is needed to upload). Photo details (caption, occasion, linked order) live in the encrypted portal data. Deleting a photo removes its files.
+
 Forgot the password = the data cannot be recovered (use Settings → Download encrypted backup regularly, and keep the original workbook).
 
 `vendor/xlsx.full.min.js` is SheetJS (Apache-2.0), used for the one-time Excel import.
