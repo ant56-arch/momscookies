@@ -265,6 +265,7 @@
   const balance = (o) => num(o.amtDue) - num(o.paid);
   const byId = (id) => S.vault.orders.find((o) => o.id === id);
 
+  const noOcc = (o) => o.status !== 'Declined' && !(o.type || '').trim();
   const owes = (o) => o.status !== 'Declined' && o.amtDue != null && balance(o) > 0.005;
   function viewOrders(main) {
     const orders = S.vault.orders, today = todayISO();
@@ -286,7 +287,7 @@
         <input class="grow" id="q" type="search" placeholder="Search name, event, notes, payment…" value="${esc(S.q)}">
       </div>
       <div class="bar">
-        ${chip('Orders', 'Orders', orders.length - count('Declined'))}${chip('Active', 'Active', active.length)}${chip('Owes', 'Owes money', owed.length)}${chip('Completed', 'Completed', count('Completed'))}${chip('Declined', 'Declined', count('Declined'))}
+        ${chip('Orders', 'Orders', orders.length - count('Declined'))}${chip('Active', 'Active', active.length)}${chip('Owes', 'Owes money', owed.length)}${chip('Completed', 'Completed', count('Completed'))}${chip('Declined', 'Declined', count('Declined'))}${chip('NoOcc', 'No occasion', orders.filter(noOcc).length)}
         <span class="sp"></span>
         <select id="oyear" aria-label="Year"><option value="All">All years</option>${years.map((y) => `<option${S.oyear === y ? ' selected' : ''}>${y}</option>`).join('')}</select>
         <select id="osort" aria-label="Sort">${[['newest', 'Newest first'], ['oldest', 'Oldest first'], ['due', 'Due date'], ['total', 'Highest total'], ['name', 'Customer A–Z']].map(([v, l]) => `<option value="${v}"${S.sort === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
@@ -305,6 +306,7 @@
       if (f === 'Owes' && !owes(o)) return false;
       if (f === 'Completed' && o.status !== 'Completed') return false;
       if (f === 'Declined' && o.status !== 'Declined') return false;
+      if (f === 'NoOcc' && !noOcc(o)) return false;
       if (y !== 'All' && !(o.due || o.requested || '').startsWith(y)) return false;
       if (q && ![o.name, o.event, o.type, o.notes, o.contact, o.reason, o.method, o.colors].join(' ').toLowerCase().includes(q)) return false;
       return true;
@@ -365,13 +367,37 @@
   }
 
   /* ---------- order editor ---------- */
+  const OCCASIONS = [['Birthday', '🎂'], ['Graduation', '🎓'], ['Baby Shower', '🍼'], ['Bridal / Bachelorette', '💍'], ['Football / Sports', '🏈'],
+    ['Thanksgiving', '🦃'], ['Christmas', '🎄'], ['Easter', '🐣'], ["Valentine's", '💝'], ['Halloween', '🎃'], ['Party / Event', '🎉'], ['Other', '✨']];
+  const OCC_EMOJI = { ...Object.fromEntries(OCCASIONS), 'Not set': '❔' };
+  const OCC_LEGACY = { football: 'Football / Sports', sports: 'Football / Sports', 'bachelorette party': 'Bridal / Bachelorette', bachelorette: 'Bridal / Bachelorette',
+    'bridal shower': 'Bridal / Bachelorette', bridal: 'Bridal / Bachelorette', valentines: "Valentine's", valentine: "Valentine's", event: 'Party / Event', party: 'Party / Event',
+    other: 'Other', 'baby shower': 'Baby Shower', birthday: 'Birthday', graduation: 'Graduation', thanksgiving: 'Thanksgiving', christmas: 'Christmas', easter: 'Easter', halloween: 'Halloween' };
+  const OCC_RULES = [
+    [/baby|gender|reveal/i, 'Baby Shower'], [/bridal|bachelorette|wedding|bride/i, 'Bridal / Bachelorette'],
+    [/birthday|b-?day|\b\d+(st|nd|rd|th)\b/i, 'Birthday'], [/grad|diploma|class of/i, 'Graduation'],
+    [/lions|football|msu|umich|michigan|tailgate|pistons|basketball|jersey|sports/i, 'Football / Sports'],
+    [/thanksgiving|turkey|pie cookie/i, 'Thanksgiving'], [/christmas|xmas/i, 'Christmas'], [/easter|bunny/i, 'Easter'],
+    [/valentine/i, "Valentine's"], [/halloween/i, 'Halloween'], [/retire|reunion|golf|bowling|luau|euchre|outing|party/i, 'Party / Event'],
+  ];
+  // Returns { name, source }: 'set' (your entry), 'guessed' (from the event text) or 'none'.
+  function occasionOf(o) {
+    const raw = (o.type || '').trim();
+    const name = raw ? (OCC_LEGACY[raw.toLowerCase()] || raw) : '';
+    if (name && name !== 'Party / Event' && name !== 'Other') return { name, source: 'set' };
+    const text = [o.event, o.notes, o.colors].join(' ');
+    const hit = OCC_RULES.find(([re]) => re.test(text));
+    if (hit && hit[1] !== name) return { name: hit[1], source: 'guessed' };
+    return name ? { name, source: 'set' } : { name: 'Not set', source: 'none' };
+  }
+
   const METHODS = ['', 'Cash', 'Venmo', 'Zelle', 'Check', 'Gift', 'Other'];
   const FIELDS = [
     ['#', 'Customer & status'],
     ['name', 'Customer', 'text', { req: 1 }], ['contact', 'Phone / email', 'text'],
     ['status', 'Status', 'select', { opts: STATUSES }], ['reason', 'Reason (if declined)', 'text'],
     ['#', 'Event & dates'],
-    ['event', 'Event', 'text'], ['type', 'Event type', 'text', { list: 'types' }],
+    ['event', 'Event name / details', 'text'], ['type', 'Occasion', 'select', { opts: ['', ...OCCASIONS.map((x) => x[0])], hint: (o) => { const g = occasionOf(o); return !(o.type || '').trim() && g.source === 'guessed' ? `<small class="muted">Suggestion: ${esc(g.name)}</small>` : ''; } }],
     ['requested', 'Date requested', 'date'], ['due', 'Pickup / due date', 'date'],
     ['kind', 'Custom / Premade', 'select', { opts: ['', 'Custom', 'Premade'] }], ['designs', '# of designs', 'number', { step: '1' }],
     ['#', 'Pricing'],
@@ -414,7 +440,7 @@
         const hit = x.opts.find((s) => s && String(s).toLowerCase() === String(v).toLowerCase());
         if (hit) cur = hit;
         const opts = cur && !x.opts.includes(cur) ? [...x.opts, cur] : x.opts;
-        return `<label${cls}>${label}<select name="${k}">${opts.map((s) => `<option value="${esc(s)}"${s === cur ? ' selected' : ''}>${s === '' ? '— select —' : esc(s)}</option>`).join('')}</select></label>`;
+        return `<label${cls}>${label}<select name="${k}">${opts.map((s) => `<option value="${esc(s)}"${s === cur ? ' selected' : ''}>${s === '' ? '— select —' : esc(s)}</option>`).join('')}</select>${x.hint ? x.hint(o) : ''}</label>`;
       }
       if (type === 'textarea') return `<label${cls}>${label}<textarea name="${k}" rows="3">${esc(v)}</textarea></label>`;
       return `<label${cls}>${label}<input name="${k}" type="${type}" value="${esc(v)}"${x.step ? ` step="${x.step}"` : ''}${x.req ? ' required' : ''}${x.list ? ` list="dl-${x.list}"` : ''}></label>`;
@@ -631,6 +657,78 @@
         <text x="${x + bw / 2}" y="${H - 9}">${esc(it.l)}</text>`;
     }).join('')}</svg>`;
   }
+  /* ---------- revenue by occasion ---------- */
+  function occasionSection(year) {
+    const scope = S.occScope || 'year';
+    const list = S.vault.orders.filter((o) => o.status === 'Completed' && (scope === 'all' || (o.due || o.requested || '').startsWith(year)));
+    const g = {};
+    let guessed = 0;
+    for (const o of list) {
+      const oc = occasionOf(o);
+      const r = (g[oc.name] ||= { name: oc.name, rev: 0, orders: 0, cookies: 0, guess: 0 });
+      r.rev += num(o.paid); r.orders++; r.cookies += num(o.qty);
+      if (oc.source === 'guessed') { r.guess++; guessed++; }
+    }
+    const unk = g['Not set'];
+    const rows = Object.values(g).filter((r) => r.name !== 'Not set').sort((a, b) => b.rev - a.rev);
+    const total = list.reduce((s, o) => s + num(o.paid), 0);
+    const max = Math.max(1, ...rows.map((r) => r.rev), unk ? unk.rev : 0);
+    const known = list.length - (unk ? unk.orders : 0);
+    const cov = list.length ? Math.round(known / list.length * 100) : 100;
+    const untagged = S.vault.orders.filter((o) => o.status === 'Completed' && !(o.type || '').trim()).length;
+    const top = rows[0];
+    const row = (r, cls = '') => `<div class="orr ${cls}">
+        <span class="on"><span class="oe">${OCC_EMOJI[r.name] || '🍪'}</span><span class="oname">${esc(r.name)}${r.guess ? `<small title="Guessed from the event name">${r.guess} guessed</small>` : ''}</span></span>
+        <span class="obar"><i style="width:${Math.max(2, r.rev / max * 100)}%"></i></span>
+        <span class="ov">${money(r.rev)}</span><span class="op">${total ? Math.round(r.rev / total * 100) : 0}%</span>
+        <span class="oc">${r.orders} order${r.orders === 1 ? '' : 's'}</span><span class="oa">${r.orders ? money(r.rev / r.orders) : '—'} avg</span></div>`;
+    return `<div class="panel occ">
+      <div class="mhead"><h3>Revenue by occasion</h3>
+        <div class="seg" role="group" aria-label="Period"><button data-occscope="year" aria-pressed="${scope === 'year'}">${year}</button><button data-occscope="all" aria-pressed="${scope === 'all'}">All time</button></div></div>
+      ${top ? `<p class="insight"><b>${esc(top.name)}</b> is your top occasion — ${money(top.rev)}, ${total ? Math.round(top.rev / total * 100) : 0}% of ${scope === 'all' ? 'all-time' : year} revenue.</p>` : ''}
+      <div class="cover"><div class="covbar"><i style="width:${cov}%"></i></div>
+        <span>${cov === 100 ? '✓ Every order has an occasion' : `Occasion is known for <b>${known}</b> of <b>${list.length}</b> orders (${cov}%)`}${guessed ? ` · ${guessed} guessed from the event name` : ''}</span>
+        ${untagged ? `<button class="btn small" data-tag>Tag ${untagged} order${untagged === 1 ? '' : 's'}</button>` : ''}</div>
+      <div class="orr ohd"><span>Occasion</span><span></span><span class="ov">Collected</span><span class="op">Share</span><span class="oc">Orders</span><span class="oa">Average</span></div>
+      ${rows.map((r) => row(r)).join('') || '<p class="muted">No completed orders in this period.</p>'}
+      ${unk ? row(unk, 'unk') : ''}
+      ${unk ? '<p class="muted small">“Not set” orders have no occasion yet, so they are not in any group above. Use <b>Tag orders</b> to fill them in quickly.</p>' : ''}
+    </div>`;
+  }
+
+  function openTagger() {
+    const queue = S.vault.orders.filter((o) => o.status === 'Completed' && !(o.type || '').trim())
+      .sort((a, b) => (b.due || b.requested || '').localeCompare(a.due || a.requested || ''));
+    if (!queue.length) return;
+    const dlg = $('#dlg');
+    let i = 0, tagged = 0;
+    const draw = () => {
+      if (i >= queue.length) {
+        dlg.innerHTML = `<div class="tagger" id="tg"><h2>All done 🎉</h2><p>You tagged <b>${tagged}</b> order${tagged === 1 ? '' : 's'}.</p><div class="actions"><button class="btn" data-x>Close</button></div></div>`;
+      } else {
+        const o = queue[i], g = occasionOf(o);
+        dlg.innerHTML = `<div class="tagger" id="tg">
+          <div class="tg-top"><span class="muted">${i + 1} of ${queue.length}</span><div class="tg-prog"><i style="width:${i / queue.length * 100}%"></i></div><button class="btn ghost small" data-x>Done</button></div>
+          <div class="tg-card"><b>${esc(o.name)}</b><span>${esc(fmtDate(o.due || o.requested)) || 'no date'} · ${o.qty ?? '?'} cookies · ${money(o.paid ?? o.amtDue ?? 0)}</span>
+            ${o.event ? `<span>Event: ${esc(o.event)}</span>` : ''}${o.colors ? `<span>Colors: ${esc(o.colors)}</span>` : ''}${o.notes ? `<span class="muted">${esc(o.notes)}</span>` : ''}</div>
+          <p class="muted small">What was the occasion?</p>
+          <div class="tg-grid">${OCCASIONS.map(([n, e]) => `<button class="chip tg-btn${g.name === n ? ' sug' : ''}" data-occ="${esc(n)}"><span>${e}</span>${esc(n)}${g.name === n ? ' <small>suggested</small>' : ''}</button>`).join('')}</div>
+          <div class="actions"><button class="btn ghost small" data-back${i ? '' : ' disabled'}>‹ Back</button><button class="btn ghost small" data-skip>Skip</button></div></div>`;
+      }
+      $('#tg').onclick = (e) => {
+        const t = e.target;
+        const occ = t.closest('[data-occ]');
+        if (occ) { queue[i].type = occ.dataset.occ; tagged++; touch(); i++; draw(); return; }
+        if (t.closest('[data-skip]')) { i++; draw(); return; }
+        if (t.closest('[data-back]') && i > 0) { i--; if (queue[i].type) { queue[i].type = ''; tagged = Math.max(0, tagged - 1); touch(); } draw(); return; }
+        if (t.closest('[data-x]')) { dlg.close(); render(); }
+      };
+    };
+    dlg.onclose = () => { dlg.onclose = null; render(); };
+    draw();
+    dlg.showModal();
+  }
+
   /* ---------- monthly revenue ---------- */
   function monthStats(year) {
     const arr = Array.from({ length: 12 }, (_, i) => ({ i, rev: 0, orders: 0, cookies: 0, up: 0, upN: 0 }));
@@ -714,12 +812,6 @@
     const cur = S.year && ys.find((r) => r.y == S.year) ? S.year : ys[ys.length - 1].y;
     S.year = cur;
     const row = ys.find((r) => r.y == cur);
-    const types = {};
-    S.vault.orders.filter((o) => o.status === 'Completed' && (o.due || o.requested || '').startsWith(cur)).forEach((o) => {
-      const t = o.type || 'Other / unset'; types[t] = (types[t] || 0) + num(o.paid);
-    });
-    const typeRows = Object.entries(types).sort((a, b) => b[1] - a[1]).slice(0, 8);
-    const tmax = Math.max(1, ...typeRows.map((t) => t[1]));
     const owing = S.vault.orders.filter((o) => o.status !== 'Declined' && o.amtDue != null && balance(o) > 0.005)
       .sort((a, b) => balance(b) - balance(a));
     const pipeline = S.vault.orders.filter((o) => OPEN.includes(o.status)).reduce((s, o) => s + num(o.amtDue), 0);
@@ -735,13 +827,12 @@
         <div class="kpi"><b class="${owing.length ? 'neg' : ''}">${money(owing.reduce((s, o) => s + balance(o), 0))}</b><span>Outstanding balances</span></div>
       </div>
       ${monthlySection(cur)}
-      <div class="panels">
-        <div class="panel"><h3>Revenue by year</h3>${bars(ys.map((r) => ({ l: r.y, v: r.rev })))}<p class="muted small">All time: ${money(total)}</p></div>
-        <div class="panel"><h3>By occasion, ${cur}</h3>${typeRows.map(([t, v]) => `<div class="hbar"><span>${esc(t)}</span><i style="width:${Math.max(2, v / tmax * 100)}%"></i><span>${money(v)}</span></div>`).join('') || '<span class="muted">No data</span>'}</div>
-      </div>
-      <h3>Year summary</h3>
-      <div class="tablebox"><table class="t"><thead><tr><th>Year</th><th class="n">Collected</th><th class="n">Orders</th><th class="n">Cookies</th><th class="n">Avg / order</th><th class="n">Declined</th></tr></thead>
-      <tbody>${ys.map((r) => `<tr><td>${r.y}</td><td class="n">${money(r.rev)}</td><td class="n">${r.orders}</td><td class="n">${r.cookies}</td><td class="n">${money(r.orders ? r.rev / r.orders : 0)}</td><td class="n">${r.declined}</td></tr>`).join('')}</tbody></table></div>
+      ${occasionSection(cur)}
+      <div class="panel"><h3>By year</h3><div class="yeargrid">
+        <div>${bars(ys.map((r) => ({ l: r.y, v: r.rev })))}<p class="muted small">All time: ${money(total)}</p></div>
+        <div class="tablebox"><table class="t"><thead><tr><th>Year</th><th class="n">Collected</th><th class="n">Orders</th><th class="n">Cookies</th><th class="n">Avg / order</th><th class="n">Declined</th></tr></thead>
+        <tbody>${ys.map((r) => `<tr><td>${r.y}</td><td class="n">${money(r.rev)}</td><td class="n">${r.orders}</td><td class="n">${r.cookies}</td><td class="n">${money(r.orders ? r.rev / r.orders : 0)}</td><td class="n">${r.declined}</td></tr>`).join('')}</tbody></table></div>
+      </div></div>
       ${owing.length ? `<h3>Outstanding balances</h3><div class="tablebox"><table class="t"><thead><tr><th>Customer</th><th>Due date</th><th>Status</th><th class="n">Total</th><th class="n">Paid</th><th class="n">Balance</th></tr></thead>
       <tbody>${owing.map((o) => `<tr data-id="${o.id}"><td>${esc(o.name)}</td><td>${esc(fmtDate(o.due))}</td><td>${o.status}</td><td class="n">${money(o.amtDue)}</td><td class="n">${money(o.paid)}</td><td class="n neg">${money(balance(o))}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
   }
@@ -840,6 +931,9 @@
     }
     if (t.id === 'lock' || t.closest('#lock-more')) { if (S.dirty && !confirm('You have unsaved changes. Lock anyway?')) return; S.dirty = false; location.reload(); return; }
     if (t.closest('[data-new]')) { openEdit(null); return; }
+    if (t.closest('[data-tag]')) { openTagger(); return; }
+    const osc = t.closest('[data-occscope]');
+    if (osc) { S.occScope = osc.dataset.occscope; render(); return; }
     if (t.closest('#calc-make')) { openEdit(null, S.calcOut); return; }
     const nd = t.closest('[data-newdate]');
     if (nd) { openEdit(null, { due: nd.dataset.newdate }); return; }

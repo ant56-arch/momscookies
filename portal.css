@@ -375,3 +375,48 @@ dialog::backdrop { background: rgba(30, 15, 8, .55); }
   .mbars .pbar { width: var(--h); max-width: none; height: 6px; border-radius: 0 4px 4px 0; }
   .sumrow { gap: 12px 22px; } .sumrow b { font-size: 1.25rem; }
 }
+
+/* ----- occasions ----- */
+.occ { margin-bottom: 18px; }
+.seg { display: inline-flex; border: 1.5px solid var(--border); border-radius: 999px; overflow: hidden; background: var(--surface); }
+.seg button { font: 800 .88rem inherit; font-family: inherit; min-height: 38px; padding: 0 16px; border: 0; background: none; color: var(--text); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.insight { margin: 6px 0 12px; }
+.cover { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 14px; margin-bottom: 14px; background: var(--alt); border-radius: 14px; font-size: .92rem; }
+.covbar { width: 120px; height: 10px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 25%, var(--surface)); overflow: hidden; flex: none; }
+.covbar i { display: block; height: 100%; background: var(--good); }
+.orr { display: grid; grid-template-columns: 250px minmax(80px, 1fr) 100px 52px 84px 100px; gap: 10px; align-items: center; padding: 9px 4px; border-top: 1px solid var(--border); font-size: .95rem; }
+.orr.ohd { border-top: 0; font-size: .74rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding-top: 0; }
+.orr .on { font-weight: 800; display: flex; align-items: center; gap: 8px; }
+.oe { font-size: 1.3rem; width: 1.6em; text-align: center; }
+.obar { height: 14px; border-radius: 7px; background: color-mix(in srgb, var(--muted) 14%, var(--surface)); overflow: hidden; }
+.obar i { display: block; height: 100%; border-radius: 7px; background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #fff)); }
+.orr.unk .obar i { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--muted) 45%, var(--surface)) 0 5px, color-mix(in srgb, var(--muted) 15%, var(--surface)) 5px 10px); }
+.orr.unk .on { color: var(--muted); }
+.ov, .op, .oc, .oa { text-align: right; font-variant-numeric: tabular-nums; }
+.ov { font-weight: 800; } .oc, .oa { color: var(--muted); }
+.yeargrid { display: grid; gap: 18px; grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.4fr); align-items: start; }
+.tg-top { display: flex; align-items: center; gap: 12px; }
+.tg-prog { flex: 1; height: 8px; border-radius: 5px; background: var(--alt); overflow: hidden; }
+.tg-prog i { display: block; height: 100%; background: var(--accent); }
+.tagger { padding: 22px; display: grid; gap: 14px; }
+.tagger h2 { margin: 0; }
+.tg-card { display: grid; gap: 2px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+.tg-card b { font-size: 1.25rem; }
+.tg-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.tg-btn { justify-content: flex-start; min-height: 52px; font-size: 1rem; display: flex; align-items: center; gap: 10px; text-align: left; }
+.tg-btn span { font-size: 1.4rem; }
+.tg-btn.sug { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.tg-btn small { color: var(--accent-dark); font-weight: 800; margin-left: auto; }
+@media (max-width: 900px) { .yeargrid { grid-template-columns: 1fr; } }
+@media (max-width: 760px) {
+  .orr { grid-template-columns: 1fr auto; grid-template-areas: "on ov" "bar bar" "oc oa"; gap: 4px 10px; padding: 12px 4px; }
+  .orr .on { grid-area: on; } .orr .ov { grid-area: ov; } .orr .obar { grid-area: bar; } .orr .op { display: none; }
+  .orr .oc { grid-area: oc; text-align: left; font-size: .85rem; } .orr .oa { grid-area: oa; font-size: .85rem; }
+  .orr.ohd { display: none; }
+  .tagger { padding: 16px 14px; }
+}
+
+.oname { display: grid; line-height: 1.2; }
+.oname small { font-size: .74rem; font-weight: 700; color: var(--muted); }
+.orr .on { white-space: nowrap; }
