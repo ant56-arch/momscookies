@@ -25,7 +25,7 @@
 
   const S = {
     key: null, salt: null, iter: 600000, sha: null, vault: null, site: null,
-    tab: 'orders', filter: 'Orders', oyear: 'All', sort: 'newest', q: '', year: null, refSheet: null, dirty: false,
+    tab: 'home', filter: 'Orders', oyear: 'All', sort: 'newest', q: '', year: null, refSheet: null, dirty: false,
   };
 
   /* ---------- crypto ---------- */
@@ -88,11 +88,11 @@
     const el = $('#savestate'); if (!el) return;
     const m = {
       saved: ['Saved ✓', ''], saving: ['Saving…', ''], dirty: ['Unsaved changes…', ''],
-      local: ['Not saved online — add token in Settings', 'bad'],
-      conflict: ['Changed on another device — reload to avoid losing data', 'bad'],
-      auth: ['Token rejected — check Settings', 'bad'], error: ['Save failed — will retry on next change', 'bad'],
+      local: ['⚠ Not saved', 'bad'],
+      conflict: ['⚠ Changed elsewhere', 'bad'],
+      auth: ['⚠ Token rejected', 'bad'], error: ['⚠ Save failed', 'bad'],
     }[state] || ['', ''];
-    el.textContent = m[0]; el.className = 'savestate ' + m[1];
+    el.textContent = m[0]; el.className = 'savestate ' + m[1]; el.title = m[1] ? 'Tap to fix' : '';
   }
   function touch() {
     S.dirty = true;
@@ -191,9 +191,12 @@
     env ? loginForm(env) : setupForm();
   }
 
+  const brandBlock = () => `<div class="gate-brand"><svg class="jar" aria-hidden="true"><use href="#i-jar"/></svg>
+      <div class="brand-name">Gina's Cookie Jar</div><div class="muted">Owner portal</div></div>`;
+
   function loginForm(env) {
-    $('#gate').innerHTML = `<form id="lf" class="gate">
-      <h1>🔒 Owner login</h1>
+    $('#gate').innerHTML = `<form id="lf" class="gate-card">${brandBlock()}
+      <h1>Welcome back</h1>
       <label>Username<input id="u" autocomplete="username" required></label>
       <label>Password<input id="p" type="password" autocomplete="current-password" required></label>
       <button class="btn full" type="submit">Unlock</button>
@@ -209,8 +212,8 @@
   }
 
   function setupForm() {
-    $('#gate').innerHTML = `<form id="sf" class="gate">
-      <h1>Set up your owner portal</h1>
+    $('#gate').innerHTML = `<form id="sf" class="gate-card">${brandBlock()}
+      <h1>Set up your portal</h1>
       <p class="muted small">No data exists yet. Choose a login and (optionally) import your Excel workbook. Everything is encrypted before it is saved.</p>
       <label>Username<input id="u" autocomplete="username" required></label>
       <label>Password (12+ characters — a passphrase is best)<input id="p" type="password" autocomplete="new-password" required minlength="12"></label>
@@ -240,19 +243,22 @@
   }
 
   function enterApp(state) {
-    $('#gate').hidden = true; $('#app').hidden = false;
+    $('#gate').hidden = true; $('#app').hidden = false; window.scrollTo(0, 0);
     setSave(state);
     loadSite().then(render);
     render();
+    requestAnimationFrame(() => window.scrollTo(0, 0));
   }
   async function loadSite() { if (!S.site) { try { S.site = await fetch('data/site.json').then((r) => r.json()); } catch { /* ignore */ } } }
 
   /* ---------- tabs ---------- */
   function render() {
+    const moreSet = ['more', 'calculator', 'workbook', 'settings'];
     document.querySelectorAll('#tabs button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === S.tab)));
+    document.querySelectorAll('#bottomnav button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === S.tab || (b.dataset.tab === 'more' && moreSet.includes(S.tab)))));
     const main = $('#main');
-    const views = { orders: viewOrders, calendar: viewCalendar, money: viewMoney, calculator: viewCalculator, workbook: viewWorkbook, settings: viewSettings };
-    (views[S.tab] || viewOrders)(main);
+    const views = { home: viewHome, more: viewMore, orders: viewOrders, calendar: viewCalendar, money: viewMoney, calculator: viewCalculator, workbook: viewWorkbook, settings: viewSettings };
+    (views[S.tab] || viewHome)(main);
   }
 
   /* ---------- orders ---------- */
@@ -315,7 +321,7 @@
 
   function orow(o) {
     const bal = balance(o), dec = o.status === 'Declined';
-    return `<div class="orow" data-id="${o.id}">
+    return `<div class="orow st-${o.status}" data-id="${o.id}">
       <span class="c-due">${esc(fmtDate(o.due)) || '<span class="muted">no date</span>'}</span>
       <span class="c-name"><b>${esc(o.name)}</b>${num(o.rush) > 0 ? ' <span class="pill rush">⚡ rush</span>' : ''}${o.allergies ? ` <span class="pill warn" title="${esc(o.allergies)}">⚠ ${esc(o.allergies)}</span>` : ''}
         <small>${esc(dec ? o.reason : (o.event || o.type))}</small></span>
@@ -494,10 +500,61 @@
     dlg.showModal();
   }
 
+  /* ---------- home dashboard ---------- */
+  function viewHome(main) {
+    const orders = S.vault.orders, now = new Date(), today = todayISO();
+    const active = orders.filter((o) => OPEN.includes(o.status));
+    const byDue = (a, b) => a.due.localeCompare(b.due);
+    const upcoming = active.filter((o) => o.due && o.due >= today).sort(byDue);
+    const overdue = active.filter((o) => o.due && o.due < today).sort(byDue);
+    const undated = active.filter((o) => !o.due);
+    const weekEnd = isoDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7));
+    const week = upcoming.filter((o) => o.due <= weekEnd);
+    const sumPaid = (pre) => orders.filter((o) => o.status === 'Completed' && (o.due || o.requested || '').startsWith(pre)).reduce((s, o) => s + num(o.paid), 0);
+    const owed = orders.filter(owes).sort((a, b) => balance(b) - balance(a));
+    const hr = now.getHours();
+    const greet = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
+    const months = Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1);
+      return { l: d.toLocaleDateString(undefined, { month: 'short' }), v: sumPaid(`${d.getFullYear()}-${pad(d.getMonth() + 1)}`) };
+    });
+    const attention = [...overdue, ...undated];
+    main.innerHTML = `<section class="hero-card">
+        <div><h2>${greet}! 🍪</h2>
+          <p>${week.length ? `<b>${week.length}</b> pickup${week.length === 1 ? '' : 's'} in the next 7 days · <b>${week.reduce((s, o) => s + num(o.qty), 0)}</b> cookies to bake` : 'Nothing due in the next 7 days.'}</p></div>
+        <div class="qa"><button class="btn" data-new>+ New order</button><button class="btn ghost" data-tab="calculator">Calculator</button><button class="btn ghost" data-tab="calendar">Calendar</button></div>
+      </section>
+      <div class="kpis">
+        <div class="kpi"><b>${active.length}</b><span>Active orders</span></div>
+        <div class="kpi"><b class="${owed.length ? 'neg' : ''}">${money(owed.reduce((s, o) => s + balance(o), 0))}</b><span>Owed to you (${owed.length})</span></div>
+        <div class="kpi"><b>${money(sumPaid(today.slice(0, 7)))}</b><span>Collected in ${now.toLocaleDateString(undefined, { month: 'long' })}</span></div>
+        <div class="kpi"><b>${money(sumPaid(today.slice(0, 4)))}</b><span>Collected in ${now.getFullYear()}</span></div>
+      </div>
+      <div class="panels">
+        <div class="panel"><h3>Coming up</h3>
+          ${upcoming.length ? upcoming.slice(0, 6).map(evRow).join('') : '<p class="muted">No upcoming pickups. Add an order to get started.</p>'}
+          ${upcoming.length > 6 ? '<button class="btn ghost small" data-tab="calendar">See all in calendar</button>' : ''}</div>
+        <div class="panel"><h3>Needs attention</h3>
+          ${attention.length ? `<div class="sub">Overdue or no date</div>${attention.slice(0, 5).map(evRow).join('')}` : ''}
+          ${owed.length ? `<div class="sub">Balances owed</div>${owed.slice(0, 5).map(evRow).join('')}` : ''}
+          ${!attention.length && !owed.length ? '<p class="muted">All caught up. 🎉</p>' : ''}</div>
+      </div>
+      <div class="panel"><h3>Collected, last 6 months</h3>${bars(months)}</div>`;
+  }
+
+  function viewMore(main) {
+    const card = (tab, icon, title, text) => `<button class="linkcard" data-tab="${tab}"><span class="emo">${icon}</span><b>${title}</b><span class="muted">${text}</span></button>`;
+    main.innerHTML = `<h2>More</h2><div class="linkcards">
+      ${card('calculator', '🧮', 'Price calculator', 'Quote a set of cookies')}
+      ${card('workbook', '📒', 'Workbook', 'Recipe and cost sheets')}
+      ${card('settings', '⚙️', 'Settings', 'Saving, password, import, backup')}
+      <button class="linkcard" id="lock-more"><span class="emo">🔒</span><b>Lock</b><span class="muted">Sign out on this device</span></button></div>`;
+  }
+
   /* ---------- calendar ---------- */
   const short = (n) => { const w = String(n).trim().split(/\s+/); return w.length > 1 ? `${w[0]} ${w[w.length - 1][0]}.` : w[0]; };
   function evRow(o) {
-    return `<div class="ev" data-id="${o.id}">
+    return `<div class="ev st-${o.status}" data-id="${o.id}">
       <span class="who">${esc(o.name)}</span><span>${esc(o.event || o.type || '')}</span>
       <span>${o.qty ?? '?'} cookies</span>${num(o.rush) > 0 ? '<span class="pill rush">rush</span>' : ''}
       <span class="pill st-${o.status}">${o.status}</span>
@@ -699,8 +756,14 @@
   /* ---------- events ---------- */
   document.addEventListener('click', async (e) => {
     const t = e.target;
-    if (t.closest('#tabs button')) { S.tab = t.closest('#tabs button').dataset.tab; render(); return; }
-    if (t.id === 'lock') { if (S.dirty && !confirm('You have unsaved changes. Lock anyway?')) return; S.dirty = false; location.reload(); return; }
+    const tabBtn = t.closest('[data-tab]');
+    if (tabBtn) { S.tab = tabBtn.dataset.tab; render(); window.scrollTo(0, 0); return; }
+    if (t.closest('#savestate.bad')) {
+      if (t.textContent.includes('Changed elsewhere')) { if (confirm('Reload to get the latest data? Unsaved changes on this device will be lost.')) { S.dirty = false; location.reload(); } }
+      else { S.tab = 'settings'; render(); window.scrollTo(0, 0); }
+      return;
+    }
+    if (t.id === 'lock' || t.closest('#lock-more')) { if (S.dirty && !confirm('You have unsaved changes. Lock anyway?')) return; S.dirty = false; location.reload(); return; }
     if (t.closest('[data-new]')) { openEdit(null); return; }
     if (t.closest('#calc-make')) { openEdit(null, S.calcOut); return; }
     const nd = t.closest('[data-newdate]');
