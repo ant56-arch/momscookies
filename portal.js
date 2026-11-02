@@ -569,7 +569,8 @@
     const undated = active.filter((o) => !o.due);
     const weekEnd = isoDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7));
     const week = upcoming.filter((o) => o.due <= weekEnd);
-    const sumPaid = (pre) => orders.filter((o) => o.status === 'Completed' && (o.due || o.requested || '').startsWith(pre)).reduce((s, o) => s + num(o.paid), 0);
+    const cash = cashByMonth();
+    const sumPaid = (pre) => cashSum(cash, pre);
     const owed = orders.filter(owes).sort((a, b) => balance(b) - balance(a));
     const hr = now.getHours();
     const greet = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
@@ -666,9 +667,23 @@
   }
 
   /* ---------- money ---------- */
+  // Cash basis: every payment on a live (not declined/cancelled) order, counted on the date it was received. Payments without a date
+  // (e.g. imported totals) fall back to the order's pickup date, then its request date.
+  function paymentsOf(o) {
+    const fb = o.due || o.requested || '';
+    if ((o.payments || []).length) return o.payments.map((p) => ({ date: p.date || fb, amount: num(p.amount) }));
+    return num(o.paid) > 0 ? [{ date: fb, amount: num(o.paid) }] : [];
+  }
+  function cashByMonth() {
+    const m = {};
+    for (const o of S.vault.orders) for (const p of o.status === 'Declined' ? [] : paymentsOf(o)) { const k = (p.date || '').slice(0, 7); if (k.length === 7) m[k] = (m[k] || 0) + p.amount; }
+    return m;
+  }
+  const cashSum = (map, prefix) => Object.entries(map).reduce((t, [k, v]) => (k.startsWith(prefix) ? t + v : t), 0);
+
   function yearStats() {
     const years = {};
-    const Y = (y) => (years[y] ||= { y, orders: 0, cookies: 0, rev: 0, declined: 0 });
+    const Y = (y) => (years[y] ||= { y, orders: 0, cookies: 0, rev: 0, cash: 0, declined: 0 });
     for (const o of S.vault.orders) {
       if (o.status === 'Completed') {
         const y = (o.due || o.requested || '').slice(0, 4);
@@ -678,6 +693,7 @@
         if (y) Y(y).declined++;
       }
     }
+    for (const [k, v] of Object.entries(cashByMonth())) Y(k.slice(0, 4)).cash += v;
     return Object.values(years).sort((a, b) => a.y - b.y);
   }
   function bars(items, fmt = (v) => '$' + Math.round(v).toLocaleString()) {
@@ -836,9 +852,11 @@
       if (!d.startsWith(year)) continue;
       const m = +d.slice(5, 7) - 1;
       if (m < 0 || m > 11) continue;
-      if (o.status === 'Completed') { arr[m].rev += num(o.paid); arr[m].orders++; arr[m].cookies += num(o.qty); }
-      else if (OPEN.includes(o.status)) { arr[m].up += num(o.amtDue); arr[m].upN++; }
+      if (o.status === 'Completed') { arr[m].orders++; arr[m].cookies += num(o.qty); }
+      else if (OPEN.includes(o.status)) { const left = Math.max(num(o.amtDue) - num(o.paid), 0); if (left > 0) { arr[m].up += left; arr[m].upN++; } }
     }
+    const cm = cashByMonth();
+    arr.forEach((m) => { m.rev = Math.round((cm[`${year}-${pad(m.i + 1)}`] || 0) * 100) / 100; });
     return arr;
   }
   function niceScale(max) {
@@ -869,7 +887,7 @@
     const cols = cur.map((m, i) => {
       const p = prev[i];
       const tip = `${mName(i, 'long')} ${year}: ${money(m.rev)} collected · ${m.orders} order${m.orders === 1 ? '' : 's'} · ${m.cookies} cookies`
-        + (m.up ? ` · ${money(m.up)} upcoming (${m.upN})` : '') + (hasPrev ? ` · last year ${money(p.rev)}` : '');
+        + (m.up ? ` · ${money(m.up)} still to collect on ${m.upN} open order${m.upN === 1 ? '' : 's'}` : '') + (hasPrev ? ` · last year ${money(p.rev)}` : '');
       const label = m.rev > 0 ? short$(m.rev) : m.up > 0 ? '+' + short$(m.up) : '';
       const isNow = isThisYear && i === now.getMonth();
       return `<div class="mcol${isNow ? ' now' : ''}${m.rev || m.up ? '' : ' empty'}" title="${esc(tip)}">
@@ -888,18 +906,19 @@
 
     return `<div class="panel monthly">
       <div class="mhead"><h3>Revenue by month · ${year}</h3>
-        <div class="legend2"><span><i class="sw cur"></i>Collected</span><span><i class="sw up"></i>Upcoming (quoted)</span>${hasPrev ? `<span><i class="sw pbar"></i>${+year - 1}</span>` : ''}</div></div>
+        <div class="legend2"><span><i class="sw cur"></i>Collected</span><span><i class="sw up"></i>Still to collect</span>${hasPrev ? `<span><i class="sw pbar"></i>${+year - 1}</span>` : ''}</div></div>
       <div class="sumrow">
         <div><b>${money(total)}</b><span>Collected in ${year}</span></div>
         <div><b class="${change === null ? '' : change >= 0 ? 'ok' : 'neg'}">${change === null ? '—' : (change >= 0 ? '▲ ' : '▼ ') + Math.abs(change) + '%'}</b><span>${isThisYear ? `vs same months of ${+year - 1}` : `vs ${+year - 1}`}</span></div>
         <div><b>${best.rev ? mName(best.i, 'long') : '—'}</b><span>Best month${best.rev ? ' · ' + money(best.rev) : ''}</span></div>
         <div><b>${money(avg)}</b><span>Average per month</span></div>
-        ${upTotal ? `<div><b>${money(upTotal)}</b><span>Upcoming, still to bake</span></div>` : ''}
+        ${upTotal ? `<div><b>${money(upTotal)}</b><span>Still to collect on open orders</span></div>` : ''}
       </div>
       <div class="mplot"><div class="mgrid">${ticks.map((t) => `<div style="bottom:${h(t)}%"><span>${short$(t)}</span></div>`).join('')}</div>
         <div class="mcols">${cols}</div></div>
+      <p class="muted small">Collected = money received that month, by payment date. Payments with no date count in the order's pickup month. Orders and cookies are counted in the month of pickup.</p>
       <details class="mtable"><summary>Month-by-month table</summary>
-        <div class="tablebox"><table class="t"><thead><tr><th>Month</th><th class="n">Orders</th><th class="n">Cookies</th><th class="n">Collected</th><th class="n">Upcoming</th><th class="n">${hasPrev ? `vs ${+year - 1}` : ''}</th></tr></thead>
+        <div class="tablebox"><table class="t"><thead><tr><th>Month</th><th class="n">Orders picked up</th><th class="n">Cookies</th><th class="n">Collected</th><th class="n">Still to collect</th><th class="n">${hasPrev ? `vs ${+year - 1}` : ''}</th></tr></thead>
         <tbody>${rows}</tbody>
         <tfoot><tr><td>Total</td><td class="n">${cur.reduce((a, m) => a + m.orders, 0)}</td><td class="n">${cur.reduce((a, m) => a + m.cookies, 0)}</td><td class="n">${money(total)}</td><td class="n">${money(upTotal)}</td><td></td></tr></tfoot></table></div></details>
     </div>`;
@@ -914,11 +933,11 @@
     const owing = S.vault.orders.filter((o) => o.status !== 'Declined' && o.amtDue != null && balance(o) > 0.005)
       .sort((a, b) => balance(b) - balance(a));
     const pipeline = S.vault.orders.filter((o) => OPEN.includes(o.status)).reduce((s, o) => s + num(o.amtDue), 0);
-    const total = ys.reduce((s, r) => s + r.rev, 0);
+    const total = ys.reduce((s, r) => s + r.cash, 0);
     main.innerHTML = `<h2>Money</h2>
       <div class="bar"><label>Year <select id="year">${ys.map((r) => `<option${r.y == cur ? ' selected' : ''}>${r.y}</option>`).join('')}</select></label></div>
       <div class="kpis">
-        <div class="kpi"><b>${money(row.rev)}</b><span>Collected in ${cur}</span></div>
+        <div class="kpi"><b>${money(row.cash)}</b><span>Collected in ${cur}</span></div>
         <div class="kpi"><b>${row.orders}</b><span>Orders completed in ${cur}</span></div>
         <div class="kpi"><b>${money(row.orders ? row.rev / row.orders : 0)}</b><span>Average per order</span></div>
         <div class="kpi"><b>${row.cookies.toLocaleString()}</b><span>Cookies made in ${cur}</span></div>
@@ -928,9 +947,9 @@
       ${monthlySection(cur)}
       ${occasionSection(cur)}
       <div class="panel"><h3>By year</h3><div class="yeargrid">
-        <div>${bars(ys.map((r) => ({ l: r.y, v: r.rev })))}<p class="muted small">All time: ${money(total)}</p></div>
+        <div>${bars(ys.map((r) => ({ l: r.y, v: r.cash })))}<p class="muted small">All time: ${money(total)}. Collected = money received that year. Orders, cookies and average are for orders picked up that year.</p></div>
         <div class="tablebox"><table class="t"><thead><tr><th>Year</th><th class="n">Collected</th><th class="n">Orders</th><th class="n">Cookies</th><th class="n">Avg / order</th><th class="n">Declined</th></tr></thead>
-        <tbody>${ys.map((r) => `<tr><td>${r.y}</td><td class="n">${money(r.rev)}</td><td class="n">${r.orders}</td><td class="n">${r.cookies}</td><td class="n">${money(r.orders ? r.rev / r.orders : 0)}</td><td class="n">${r.declined}</td></tr>`).join('')}</tbody></table></div>
+        <tbody>${ys.map((r) => `<tr><td>${r.y}</td><td class="n">${money(r.cash)}</td><td class="n">${r.orders}</td><td class="n">${r.cookies}</td><td class="n">${money(r.orders ? r.rev / r.orders : 0)}</td><td class="n">${r.declined}</td></tr>`).join('')}</tbody></table></div>
       </div></div>
       ${owing.length ? `<h3>Outstanding balances</h3><div class="tablebox"><table class="t"><thead><tr><th>Customer</th><th>Due date</th><th>Status</th><th class="n">Total</th><th class="n">Paid</th><th class="n">Balance</th></tr></thead>
       <tbody>${owing.map((o) => `<tr data-id="${o.id}"><td>${esc(o.name)}</td><td>${esc(fmtDate(o.due))}</td><td>${o.status}</td><td class="n">${money(o.amtDue)}</td><td class="n">${money(o.paid)}</td><td class="n neg">${money(balance(o))}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
