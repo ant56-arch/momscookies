@@ -359,6 +359,7 @@
   }
 
   /* ---------- order editor ---------- */
+  const METHODS = ['', 'Cash', 'Venmo', 'Zelle', 'Check', 'Gift', 'Other'];
   const FIELDS = [
     ['#', 'Customer & status'],
     ['name', 'Customer', 'text', { req: 1 }], ['contact', 'Phone / email', 'text'],
@@ -373,7 +374,7 @@
     ['addOns', 'Add-ons', 'text'], ['addOnsAmt', 'Add-ons amount ($)', 'number', { step: '0.01' }],
     ['amtDue', 'Amount due ($)', 'number', { step: '0.01' }],
     ['#', 'Payment'],
-    ['paid', 'Amount paid ($)', 'number', { step: '0.01' }], ['method', 'Payment method', 'text', { list: 'methods' }],
+    ['paid', 'Amount paid ($)', 'number', { step: '0.01' }], ['method', 'Payment method', 'select', { opts: METHODS }],
     ['@pay', '', 'pay'],
     ['#', 'Details'],
     ['colors', 'Special colors', 'text'], ['allergies', 'Allergies', 'text'],
@@ -402,7 +403,13 @@
       if (k === '@pay') return '<div class="paybox wide" id="paybox"></div>';
       const v = o[k] ?? '';
       const cls = x.wide ? ' class="wide"' : '';
-      if (type === 'select') return `<label${cls}>${label}<select name="${k}">${x.opts.map((s) => `<option${s === v ? ' selected' : ''}>${s}</option>`).join('')}</select></label>`;
+      if (type === 'select') {
+        let cur = v;
+        const hit = x.opts.find((s) => s && String(s).toLowerCase() === String(v).toLowerCase());
+        if (hit) cur = hit;
+        const opts = cur && !x.opts.includes(cur) ? [...x.opts, cur] : x.opts;
+        return `<label${cls}>${label}<select name="${k}">${opts.map((s) => `<option value="${esc(s)}"${s === cur ? ' selected' : ''}>${s === '' ? '— select —' : esc(s)}</option>`).join('')}</select></label>`;
+      }
       if (type === 'textarea') return `<label${cls}>${label}<textarea name="${k}" rows="3">${esc(v)}</textarea></label>`;
       return `<label${cls}>${label}<input name="${k}" type="${type}" value="${esc(v)}"${x.step ? ` step="${x.step}"` : ''}${x.req ? ' required' : ''}${x.list ? ` list="dl-${x.list}"` : ''}></label>`;
     };
