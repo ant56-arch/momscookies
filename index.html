@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mom's Cookies</title>
+  <meta name="description" content="Homemade cookies, baked fresh to order.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#top"><span aria-hidden="true">🍪</span> <span id="brand-name">Mom's Cookies</span></a>
+    <nav>
+      <a href="#menu">Menu</a>
+      <a href="#about">About</a>
+      <a href="#contact">Contact</a>
+      <button id="cart-open" class="cart-btn" aria-label="Open your order">
+        Order <span id="cart-count" class="badge">0</span>
+      </button>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <h1 id="tagline">Homemade cookies, baked fresh to order.</h1>
+      <p id="hero-sub">Browse the menu, build your order, and we'll confirm pickup details with you.</p>
+      <a class="btn" href="#menu">See the menu</a>
+    </section>
+
+    <section id="menu" class="section">
+      <h2>Menu</h2>
+      <div id="filters" class="filters" role="tablist" aria-label="Categories"></div>
+      <div id="products" class="grid" aria-live="polite">
+        <p class="muted">Loading menu…</p>
+      </div>
+    </section>
+
+    <section id="about" class="section alt">
+      <h2>About</h2>
+      <p id="about-text">Every batch is made from scratch in a home kitchen.</p>
+    </section>
+
+    <section id="contact" class="section">
+      <h2>Contact</h2>
+      <ul id="contact-list" class="contact-list"></ul>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <small>&copy; <span id="year"></span> <span id="footer-name">Mom's Cookies</span></small>
+  </footer>
+
+  <!-- Order drawer -->
+  <div id="overlay" class="overlay" hidden></div>
+  <aside id="drawer" class="drawer" aria-hidden="true" aria-label="Your order">
+    <div class="drawer-head">
+      <h2>Your order</h2>
+      <button id="cart-close" class="icon-btn" aria-label="Close">&times;</button>
+    </div>
+
+    <div id="cart-items" class="cart-items"></div>
+    <div class="total-row"><span>Estimated total</span><strong id="cart-total">$0.00</strong></div>
+
+    <form id="order-form" class="order-form">
+      <label>Your name
+        <input name="name" required autocomplete="name">
+      </label>
+      <label>Phone or email
+        <input name="contact" required autocomplete="email">
+      </label>
+      <label>Preferred pickup / delivery date
+        <input name="date" type="date">
+      </label>
+      <label>Notes (allergies, packaging, etc.)
+        <textarea name="notes" rows="3"></textarea>
+      </label>
+      <button type="submit" class="btn full" id="send-btn">Send order request</button>
+      <button type="button" class="btn ghost full" id="copy-btn">Copy order text</button>
+      <p class="muted small" id="order-hint"></p>
+    </form>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+</html>
