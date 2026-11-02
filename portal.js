@@ -631,16 +631,91 @@
         <text x="${x + bw / 2}" y="${H - 9}">${esc(it.l)}</text>`;
     }).join('')}</svg>`;
   }
+  /* ---------- monthly revenue ---------- */
+  function monthStats(year) {
+    const arr = Array.from({ length: 12 }, (_, i) => ({ i, rev: 0, orders: 0, cookies: 0, up: 0, upN: 0 }));
+    for (const o of S.vault.orders) {
+      const d = o.due || o.requested || '';
+      if (!d.startsWith(year)) continue;
+      const m = +d.slice(5, 7) - 1;
+      if (m < 0 || m > 11) continue;
+      if (o.status === 'Completed') { arr[m].rev += num(o.paid); arr[m].orders++; arr[m].cookies += num(o.qty); }
+      else if (OPEN.includes(o.status)) { arr[m].up += num(o.amtDue); arr[m].upN++; }
+    }
+    return arr;
+  }
+  function niceScale(max) {
+    const steps = [10, 25, 50, 100, 250, 500, 1000, 2000, 2500, 5000, 10000];
+    const step = steps.find((s) => max / s <= 5) || 20000;
+    const top = Math.max(step, Math.ceil(max / step) * step);
+    const ticks = []; for (let t = 0; t <= top; t += step) ticks.push(t);
+    return { top, ticks };
+  }
+  const short$ = (v) => (v >= 1000 ? '$' + (v / 1000).toFixed(v >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'k' : '$' + Math.round(v));
+  const pct = (a, b) => (b > 0 ? Math.round((a - b) / b * 100) : null);
+
+  function monthlySection(year) {
+    const cur = monthStats(year), prev = monthStats(String(+year - 1));
+    const hasPrev = prev.some((m) => m.rev > 0);
+    const now = new Date(), isThisYear = String(now.getFullYear()) === String(year);
+    const elapsed = isThisYear ? now.getMonth() + 1 : String(year) > String(now.getFullYear()) ? 0 : 12;
+    const mName = (i, style) => new Date(2000, i, 1).toLocaleDateString(undefined, { month: style });
+    const total = cur.reduce((a, m) => a + m.rev, 0);
+    const prevSame = prev.slice(0, elapsed || 12).reduce((a, m) => a + m.rev, 0);
+    const change = hasPrev ? pct(total, prevSame) : null;
+    const best = cur.reduce((b, m) => (m.rev > b.rev ? m : b), cur[0]);
+    const avg = elapsed ? total / elapsed : 0;
+    const { top, ticks } = niceScale(Math.max(...cur.map((m) => m.rev + m.up), ...(hasPrev ? prev.map((m) => m.rev) : [0]), 1));
+    const h = (v) => (v / top * 100).toFixed(2);
+    const upTotal = cur.reduce((a, m) => a + m.up, 0);
+
+    const cols = cur.map((m, i) => {
+      const p = prev[i];
+      const tip = `${mName(i, 'long')} ${year}: ${money(m.rev)} collected · ${m.orders} order${m.orders === 1 ? '' : 's'} · ${m.cookies} cookies`
+        + (m.up ? ` · ${money(m.up)} upcoming (${m.upN})` : '') + (hasPrev ? ` · last year ${money(p.rev)}` : '');
+      const label = m.rev > 0 ? short$(m.rev) : m.up > 0 ? '+' + short$(m.up) : '';
+      const isNow = isThisYear && i === now.getMonth();
+      return `<div class="mcol${isNow ? ' now' : ''}${m.rev || m.up ? '' : ' empty'}" title="${esc(tip)}">
+        <div class="mbars">
+          ${hasPrev ? `<i class="pbar" style="--h:${h(p.rev)}%"></i>` : ''}
+          <div class="stack" style="--h:${h(m.rev + m.up)}%">${m.up ? `<i class="up" style="flex:${m.up}"></i>` : ''}${m.rev ? `<i class="cur" style="flex:${m.rev}"></i>` : ''}${label ? `<em>${label}</em>` : ''}</div>
+        </div><div class="mlab">${mName(i, 'short')}</div></div>`;
+    }).join('');
+
+    const rows = cur.map((m, i) => {
+      const d = hasPrev ? m.rev - prev[i].rev : null;
+      return `<tr class="${isThisYear && i === now.getMonth() ? 'nowrow' : ''}"><td>${mName(i, 'long')}</td><td class="n">${m.orders || '—'}</td><td class="n">${m.cookies || '—'}</td>
+        <td class="n"><b>${m.rev ? money(m.rev) : '—'}</b></td><td class="n muted">${m.up ? money(m.up) : '—'}</td>
+        <td class="n ${d > 0 ? 'ok' : d < 0 ? 'neg' : 'muted'}">${d === null || (!m.rev && !prev[i].rev) ? '—' : (d > 0 ? '+' : d < 0 ? '−' : '') + money(Math.abs(d))}</td></tr>`;
+    }).join('');
+
+    return `<div class="panel monthly">
+      <div class="mhead"><h3>Revenue by month · ${year}</h3>
+        <div class="legend2"><span><i class="sw cur"></i>Collected</span><span><i class="sw up"></i>Upcoming (quoted)</span>${hasPrev ? `<span><i class="sw pbar"></i>${+year - 1}</span>` : ''}</div></div>
+      <div class="sumrow">
+        <div><b>${money(total)}</b><span>Collected in ${year}</span></div>
+        <div><b class="${change === null ? '' : change >= 0 ? 'ok' : 'neg'}">${change === null ? '—' : (change >= 0 ? '▲ ' : '▼ ') + Math.abs(change) + '%'}</b><span>${isThisYear ? `vs same months of ${+year - 1}` : `vs ${+year - 1}`}</span></div>
+        <div><b>${best.rev ? mName(best.i, 'long') : '—'}</b><span>Best month${best.rev ? ' · ' + money(best.rev) : ''}</span></div>
+        <div><b>${money(avg)}</b><span>Average per month</span></div>
+        ${upTotal ? `<div><b>${money(upTotal)}</b><span>Upcoming, still to bake</span></div>` : ''}
+      </div>
+      <div class="mplot"><div class="mgrid">${ticks.map((t) => `<div style="bottom:${h(t)}%"><span>${short$(t)}</span></div>`).join('')}</div>
+        <div class="mcols">${cols}</div></div>
+      <details class="mtable"><summary>Month-by-month table</summary>
+        <div class="tablebox"><table class="t"><thead><tr><th>Month</th><th class="n">Orders</th><th class="n">Cookies</th><th class="n">Collected</th><th class="n">Upcoming</th><th class="n">${hasPrev ? `vs ${+year - 1}` : ''}</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><td>Total</td><td class="n">${cur.reduce((a, m) => a + m.orders, 0)}</td><td class="n">${cur.reduce((a, m) => a + m.cookies, 0)}</td><td class="n">${money(total)}</td><td class="n">${money(upTotal)}</td><td></td></tr></tfoot></table></div></details>
+    </div>`;
+  }
+
   function viewMoney(main) {
     const ys = yearStats();
     if (!ys.length) { main.innerHTML = '<h2>Money</h2><p class="muted">No completed orders yet.</p>'; return; }
     const cur = S.year && ys.find((r) => r.y == S.year) ? S.year : ys[ys.length - 1].y;
     S.year = cur;
     const row = ys.find((r) => r.y == cur);
-    const months = Array.from({ length: 12 }, (_, i) => ({ l: new Date(2000, i).toLocaleDateString(undefined, { month: 'short' }), v: 0 }));
     const types = {};
     S.vault.orders.filter((o) => o.status === 'Completed' && (o.due || o.requested || '').startsWith(cur)).forEach((o) => {
-      const m = +(o.due || o.requested).slice(5, 7) - 1; if (m >= 0) months[m].v += num(o.paid);
       const t = o.type || 'Other / unset'; types[t] = (types[t] || 0) + num(o.paid);
     });
     const typeRows = Object.entries(types).sort((a, b) => b[1] - a[1]).slice(0, 8);
@@ -659,9 +734,9 @@
         <div class="kpi"><b>${money(pipeline)}</b><span>Open orders (quoted)</span></div>
         <div class="kpi"><b class="${owing.length ? 'neg' : ''}">${money(owing.reduce((s, o) => s + balance(o), 0))}</b><span>Outstanding balances</span></div>
       </div>
+      ${monthlySection(cur)}
       <div class="panels">
         <div class="panel"><h3>Revenue by year</h3>${bars(ys.map((r) => ({ l: r.y, v: r.rev })))}<p class="muted small">All time: ${money(total)}</p></div>
-        <div class="panel"><h3>Revenue by month, ${cur}</h3>${bars(months)}</div>
         <div class="panel"><h3>By occasion, ${cur}</h3>${typeRows.map(([t, v]) => `<div class="hbar"><span>${esc(t)}</span><i style="width:${Math.max(2, v / tmax * 100)}%"></i><span>${money(v)}</span></div>`).join('') || '<span class="muted">No data</span>'}</div>
       </div>
       <h3>Year summary</h3>

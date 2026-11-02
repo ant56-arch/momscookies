@@ -318,3 +318,60 @@ dialog::backdrop { background: rgba(30, 15, 8, .55); }
   .gate-card { padding: 22px 18px; }
 }
 @media (max-width: 400px) { .fgrid { grid-template-columns: 1fr; } }
+
+/* ----- monthly revenue chart ----- */
+.monthly { margin-bottom: 18px; }
+.mhead { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 16px; }
+.mhead h3 { font-size: 1.2rem; }
+.legend2 { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: .85rem; color: var(--muted); font-weight: 700; }
+.legend2 span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; }
+.sw.cur, .stack .cur { background: var(--accent); }
+.sw.up, .stack .up { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--accent) 55%, var(--surface)) 0 5px, color-mix(in srgb, var(--accent) 18%, var(--surface)) 5px 10px); }
+.sw.up { border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); }
+.sw.pbar, .pbar { background: color-mix(in srgb, var(--muted) 38%, var(--surface)); }
+.sumrow { display: flex; flex-wrap: wrap; gap: 12px 34px; margin: 10px 0 22px; }
+.sumrow b { display: block; font-size: 1.45rem; line-height: 1.2; font-weight: 800; }
+.sumrow span { color: var(--muted); font-size: .85rem; font-weight: 600; }
+.mplot { position: relative; height: 320px; margin-left: 44px; }
+.mgrid { position: absolute; left: 0; right: 0; top: 22px; bottom: 30px; pointer-events: none; }
+.mgrid > div { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--border); }
+.mgrid > div:first-child { border-top: 2px solid var(--border); }
+.mgrid span { position: absolute; left: -44px; top: -.7em; width: 38px; text-align: right; font-size: .76rem; font-weight: 700; color: var(--muted); }
+.mcols { position: relative; height: 100%; display: flex; gap: 6px; }
+.mcol { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+.mbars { flex: 1; box-sizing: border-box; padding-top: 22px; padding-bottom: 0; display: flex; align-items: flex-end; justify-content: center; gap: 3px; }
+.mbars .pbar { width: 20%; max-width: 16px; height: var(--h); border-radius: 5px 5px 0 0; }
+.stack { position: relative; width: 56%; max-width: 46px; height: var(--h); display: flex; flex-direction: column; justify-content: flex-end; border-radius: 8px 8px 0 0; overflow: visible; }
+.stack i { display: block; width: 100%; min-height: 0; }
+.stack .up { border-radius: 8px 8px 0 0; }
+.stack i:last-of-type:first-of-type { border-radius: 8px 8px 0 0; }
+.stack .cur:not(:first-child) { border-radius: 0; }
+.stack .cur:first-child { border-radius: 8px 8px 0 0; }
+.stack em { font-style: normal; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 4px; font: 800 .78rem/1 inherit; font-family: inherit; white-space: nowrap; color: var(--text); }
+.mlab { height: 30px; display: grid; place-items: center; font-size: .82rem; font-weight: 700; color: var(--muted); }
+.mcol:hover .stack .cur, .mcol:hover .pbar { filter: brightness(1.08); }
+.mcol.now .mlab { color: var(--accent-dark); font-weight: 800; }
+.mcol.now .mlab::after { content: ""; display: block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-top: -4px; }
+.mcol.empty .mlab { opacity: .55; }
+.mtable { margin-top: 18px; }
+.mtable summary { cursor: pointer; font-weight: 800; padding: 6px 0; color: var(--accent-dark); }
+.mtable .tablebox { margin-top: 8px; box-shadow: none; }
+.t tfoot td { font-weight: 800; background: var(--alt); border-bottom: 0; }
+.t tr.nowrow td { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+@media (max-width: 760px) {
+  .mplot { height: auto; margin-left: 0; }
+  .mgrid { display: none; }
+  .mcols { flex-direction: column; gap: 8px; }
+  .mcol { flex-direction: row; align-items: center; gap: 10px; }
+  .mlab { order: -1; width: 38px; height: auto; justify-items: start; flex: none; }
+  .mcol.now .mlab::after { display: none; }
+  .mbars { padding: 0; flex-direction: column-reverse; align-items: flex-start; justify-content: center; gap: 3px; margin-right: 52px; }
+  .stack { width: var(--h); max-width: none; height: 24px; min-width: 3px; flex-direction: row-reverse; justify-content: flex-end; border-radius: 0 8px 8px 0; }
+  .stack i { width: auto; height: 100%; }
+  .stack .up, .stack .cur, .stack .cur:first-child, .stack .up:first-child { border-radius: 0; }
+  .stack i:first-child { border-radius: 0 8px 8px 0 !important; }
+  .stack em { bottom: auto; top: 50%; left: 100%; transform: translateY(-50%); margin: 0 0 0 6px; }
+  .mbars .pbar { width: var(--h); max-width: none; height: 6px; border-radius: 0 4px 4px 0; }
+  .sumrow { gap: 12px 22px; } .sumrow b { font-size: 1.25rem; }
+}
