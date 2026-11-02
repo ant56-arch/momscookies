@@ -614,3 +614,5 @@ body.portal { background: radial-gradient(900px 360px at 8% -8%, color-mix(in sr
 .board { grid-template-columns: repeat(5, minmax(200px, 1fr)); }
 .page-head .sub { text-transform: none; letter-spacing: 0; font-size: 1rem; margin: 2px 0 0; }
 .hero-card .btn:not(.ghost) { color: #8f4a1b; }
+
+.gate-card .showpw { display: flex; gap: 8px; align-items: center; font-weight: 600; }

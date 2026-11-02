@@ -80,6 +80,19 @@
     S.vault = JSON.parse(new TextDecoder().decode(plain));
   }
 
+  // Phone keyboards often capitalize the first letter or add a trailing space, so try the
+  // likely variants. Only the exact credentials used at setup can decrypt, so this is as safe as one try.
+  async function openForgiving(env, user, pw) {
+    const u = user.trim();
+    const users = [...new Set([u, u.toLowerCase(), u.charAt(0).toLowerCase() + u.slice(1), u.charAt(0).toUpperCase() + u.slice(1)])];
+    const pws = [...new Set([pw, pw.trim()])];
+    let last;
+    for (const uu of users) for (const pp of pws) {
+      try { await open(env, uu, pp); return; } catch (e) { last = e; }
+    }
+    throw last;
+  }
+
   /* ---------- GitHub storage ---------- */
   const tok = () => { try { return localStorage.getItem('gcj_token') || ''; } catch { return ''; } };
   const api = `https://api.github.com/repos/${CFG.owner}/${CFG.repo}/contents/${CFG.path}`;
@@ -305,16 +318,25 @@
   function loginForm(env) {
     $('#gate').innerHTML = `<form id="lf" class="gate-card">${brandBlock()}
       <h1>Welcome back</h1>
-      <label>Username<input id="u" autocomplete="username" required></label>
-      <label>Password<input id="p" type="password" autocomplete="current-password" required></label>
-      <button class="btn full" type="submit">Unlock</button>
+      <label>Username<input id="u" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
+      <label>Password<input id="p" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
+      <label class="check showpw"><input type="checkbox" id="showpw"> Show password</label>
+      <button class="btn full" type="submit" id="unlock">Unlock</button>
       <div class="err" id="err" role="alert"></div>
       <p class="muted small">Your data is encrypted; it's only decrypted in this browser.</p></form>`;
+    $('#showpw').addEventListener('change', (e) => { $('#p').type = e.target.checked ? 'text' : 'password'; });
     $('#lf').addEventListener('submit', async (e) => {
       e.preventDefault();
+      const btn = $('#unlock');
       $('#err').textContent = '';
-      try { await open(env, $('#u').value.trim(), $('#p').value); }
-      catch { $('#err').textContent = 'Wrong username or password.'; return; }
+      btn.disabled = true; btn.textContent = 'Checking…';
+      await new Promise((r) => setTimeout(r, 30)); // let the button repaint before the heavy work
+      try { await openForgiving(env, $('#u').value, $('#p').value); }
+      catch {
+        btn.disabled = false; btn.textContent = 'Unlock';
+        $('#err').textContent = 'That username and password did not match. Check capital letters and spaces. Tap “Show password” to see what you typed.';
+        return;
+      }
       enterApp(tok() ? 'saved' : 'local');
     });
   }
@@ -323,7 +345,7 @@
     $('#gate').innerHTML = `<form id="sf" class="gate-card">${brandBlock()}
       <h1>Set up your portal</h1>
       <p class="muted small">No data exists yet. Choose a login and (optionally) import your Excel workbook. Everything is encrypted before it is saved.</p>
-      <label>Username<input id="u" autocomplete="username" required></label>
+      <label>Username<input id="u" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
       <label>Password (12+ characters — a passphrase is best)<input id="p" type="password" autocomplete="new-password" required minlength="12"></label>
       <label>Repeat password<input id="p2" type="password" autocomplete="new-password" required minlength="12"></label>
       <label>Import your workbook (.xlsx) — optional<input id="f" type="file" accept=".xlsx,.xls"></label>
@@ -1447,7 +1469,7 @@
           <li>Set the longest expiration offered, generate, and paste the token above.</li></ol>
           <p class="muted small">The token can only touch this one repository. It stays in this browser only; it is never saved to the site.</p></details></div>
       <div class="panel help" style="margin-top:16px"><h3>Change username / password</h3>
-        <div class="bar"><input id="nu" placeholder="Username" autocomplete="username"><input id="np" type="password" placeholder="New password (12+ chars)" autocomplete="new-password"><button class="btn small" id="pw-save">Change</button></div>
+        <div class="bar"><input id="nu" placeholder="Username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"><input id="np" type="password" placeholder="New password (12+ chars)" autocomplete="new-password"><button class="btn small" id="pw-save">Change</button></div>
         <div class="err" id="pw-msg"></div></div>
       <div class="panel help" style="margin-top:16px"><h3>Import your Excel workbook</h3>
         <p class="muted small">${plural(S.vault.orders.length, 'order')} ${S.vault.orders.length === 1 ? 'is' : 'are'} in the portal now. Importing reads your .xlsx in this browser (it is not uploaded) and <b>replaces</b> the orders and reference sheets.</p>
