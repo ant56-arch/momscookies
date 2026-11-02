@@ -251,7 +251,7 @@
   function render() {
     document.querySelectorAll('#tabs button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === S.tab)));
     const main = $('#main');
-    ({ orders: viewOrders, calendar: viewCalendar, money: viewMoney, workbook: viewWorkbook, settings: viewSettings }[S.tab])(main);
+    ({ orders: viewOrders, calendar: viewCalendar, money: viewMoney, calculator: viewCalculator, workbook: viewWorkbook, settings: viewSettings }[S.tab])(main);
   }
 
   /* ---------- orders ---------- */
@@ -483,14 +483,55 @@
 
   /* ---------- workbook reference ---------- */
   function viewWorkbook(main) {
-    const names = Object.keys(S.vault.ref || {});
+    const names = Object.keys(S.vault.ref || {}).filter((n) => !/calculator/i.test(n));
     if (!names.length) { main.innerHTML = '<h2>Workbook</h2><p class="muted">No reference sheets were imported (recipes, icing costs, etc.).</p>'; return; }
     if (!names.includes(S.refSheet)) S.refSheet = names[0];
-    const rows = S.vault.ref[S.refSheet];
-    const cell = (c) => (typeof c === 'number' ? `<td class="n">${Number.isInteger(c) ? c : Math.round(c * 1000) / 1000}</td>` : `<td>${esc(c)}</td>`);
-    main.innerHTML = `<h2>Workbook</h2><p class="muted small">Read-only reference copy of your recipe and cost sheets.</p>
+    const rows = S.vault.ref[S.refSheet].filter((r) => r.some((c) => c !== null && c !== ''));
+    const cols = rows[0].map((_, i) => rows.some((r) => r[i] !== null && r[i] !== ''));
+    const cell = (c) => c === null || c === '' ? '<td></td>'
+      : typeof c === 'number' ? `<td class="n">${Number.isInteger(c) ? c : Math.round(c * 100) / 100}</td>` : `<td>${esc(c)}</td>`;
+    const isHead = (r) => r.filter((c) => typeof c === 'string').length >= 2 && r.every((c) => typeof c !== 'number');
+    main.innerHTML = `<h2>Workbook</h2><p class="muted small">Read-only copy of your recipe and cost sheets. For pricing, use the Calculator tab.</p>
       <div class="bar">${names.map((n) => `<button class="chip" data-ref="${esc(n)}" aria-selected="${n === S.refSheet}">${esc(n)}</button>`).join('')}</div>
-      <div class="tablebox"><table class="t"><tbody>${rows.map((r) => `<tr>${r.map(cell).join('')}</tr>`).join('')}</tbody></table></div>`;
+      <div class="tablebox"><table class="t ref"><tbody>${rows.map((r) => {
+        const kept = r.filter((_, i) => cols[i]);
+        return `<tr class="${isHead(r) ? 'rh' : ''}">${kept.map(cell).join('')}</tr>`;
+      }).join('')}</tbody></table></div>`;
+  }
+
+  /* ---------- calculator ---------- */
+  function viewCalculator(main) {
+    const p = (S.site && S.site.pricing) || {};
+    const st = S.calc || (S.calc = { qty: 24, price: p.perCookie ?? 4.35, colors: p.includedColors ?? 3, rush: false, addOns: 0, cost: 0.27 });
+    main.innerHTML = `<h2>Price calculator</h2>
+      <div class="panels">
+        <form class="panel ef" id="cf" style="padding:14px" novalidate>
+          <div class="fgrid">
+            <label>How many cookies?<input name="qty" type="number" min="0" step="1" value="${st.qty}"></label>
+            <label>Price each ($)<input name="price" type="number" min="0" step="0.01" value="${st.price}"></label>
+            <label>How many colors?<input name="colors" type="number" min="1" step="1" value="${st.colors}"></label>
+            <label>Add-ons ($)<input name="addOns" type="number" min="0" step="0.01" value="${st.addOns}"></label>
+            <label>Your cost per cookie ($)<input name="cost" type="number" min="0" step="0.01" value="${st.cost}"></label>
+            <label class="check" style="grid-template-columns:auto 1fr;align-items:end"><input name="rush" type="checkbox"${st.rush ? ' checked' : ''}> Rush order</label>
+          </div>
+          <p class="muted small">Base price comes from your site settings (${money(p.perCookie ?? 4.35)} each). Change "Price each" to quote a discount. Cost per cookie is about $0.27 from your Cookie Data sheet.</p>
+        </form>
+        <div class="panel" id="cout" aria-live="polite"></div>
+      </div>`;
+    const draw = () => {
+      const f = $('#cf').elements, pr = (S.site && S.site.pricing) || {};
+      Object.assign(st, { qty: num(f.qty.value), price: num(f.price.value), colors: num(f.colors.value) || 1, addOns: num(f.addOns.value), cost: num(f.cost.value), rush: f.rush.checked });
+      const rush = st.rush ? Math.ceil(st.qty / 12) * (pr.rushPerDozen ?? 5) : 0;
+      const c = calc({ qty: st.qty, price: st.price, numColors: st.colors, rush, addOnsAmt: st.addOns });
+      const costTotal = st.qty * st.cost;
+      $('#cout').innerHTML = `<h3>Quote</h3>${c.parts.map(([l, a]) => `<div class="hbar" style="grid-template-columns:1fr auto"><span>${esc(l)}</span><span>${money(a)}</span></div>`).join('')}
+        <div class="total-row"><span>Charge</span><strong>${money(c.total)}</strong></div>
+        <div class="hbar" style="grid-template-columns:1fr auto"><span class="muted">Est. ingredient cost</span><span>${money(costTotal)}</span></div>
+        <div class="hbar" style="grid-template-columns:1fr auto"><span class="muted">Est. profit before time</span><span><b>${money(c.total - costTotal)}</b></span></div>
+        <div class="hbar" style="grid-template-columns:1fr auto"><span class="muted">Per cookie, all-in</span><span>${st.qty ? money(c.total / st.qty) : '—'}</span></div>`;
+    };
+    $('#cf').addEventListener('input', draw);
+    draw();
   }
 
   /* ---------- settings ---------- */

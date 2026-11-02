@@ -78,3 +78,8 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
 .help code { background: var(--alt); padding: 1px 5px; border-radius: 4px; }
 
 .gate[hidden], #app[hidden] { display: none; }
+
+table.ref tbody tr:nth-child(even) { background: color-mix(in srgb, var(--alt) 45%, transparent); }
+table.ref tr.rh td { font-weight: 700; background: var(--alt); }
+table.ref td { padding: 6px 12px; }
+.p-tabs button { white-space: nowrap; }
