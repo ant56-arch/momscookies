@@ -657,6 +657,9 @@
     const first = new Date(c.y, c.m, 1), days = new Date(c.y, c.m + 1, 0).getDate(), lead = first.getDay();
     const rows = Math.ceil((lead + days) / 7), mk = `${c.y}-${pad(c.m + 1)}`;
     const key = (d) => `${mk}-${pad(d)}`;
+    const dataYears = S.vault.orders.map((o) => +(o.due || o.requested || '').slice(0, 4)).filter(Boolean);
+    const yMin = Math.min(c.y, now.getFullYear(), ...dataYears), yMax = Math.max(c.y, now.getFullYear() + 1, ...dataYears);
+    const yearOpts = Array.from({ length: yMax - yMin + 1 }, (_, i) => yMax - i);
     const list = S.vault.orders.filter((o) => o.due && o.due.startsWith(mk) && o.status !== 'Declined' && (showDone || o.status !== 'Completed'));
     const byDay = {};
     list.forEach((o) => (byDay[o.due] ||= []).push(o));
@@ -679,7 +682,10 @@
 
     main.innerHTML = `<div class="cal-head">
         <button class="btn ghost small" data-cal="prev" aria-label="Previous month">‹</button>
-        <h2>${first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h2>
+        <div class="cal-pick">
+          <select id="cal-month" aria-label="Month">${Array.from({ length: 12 }, (_, i) => `<option value="${i}"${i === c.m ? ' selected' : ''}>${new Date(2000, i, 1).toLocaleDateString(undefined, { month: 'long' })}</option>`).join('')}</select>
+          <select id="cal-year" aria-label="Year">${yearOpts.map((y) => `<option${y === c.y ? ' selected' : ''}>${y}</option>`).join('')}</select>
+        </div>
         <button class="btn ghost small" data-cal="next" aria-label="Next month">›</button>
         <button class="btn ghost small" data-cal="today">Today</button>
         <span class="sp"></span>
@@ -1166,6 +1172,9 @@
     if (t.id === 'osort') { S.sort = t.value; render(); }
     if (t.id === 'year') { S.year = t.value; render(); }
     if (t.id === 'cal-done') { S.calDone = t.checked; render(); }
+    if (t.id === 'cal-month' || t.id === 'cal-year') {
+      S.cal = { y: +$('#cal-year').value, m: +$('#cal-month').value }; S.calDay = null; render();
+    }
   });
   document.addEventListener('input', (e) => { if (e.target.id === 'q') { S.q = e.target.value; drawList(); } });
 

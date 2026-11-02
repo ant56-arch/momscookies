@@ -450,3 +450,8 @@ dialog::backdrop { background: rgba(30, 15, 8, .55); }
 .tt-list { display: grid; gap: 8px; max-height: 52vh; overflow-y: auto; }
 .tt-row { display: grid; gap: 2px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
 .tt-row s { color: var(--muted); }
+
+/* ----- calendar month / year picker ----- */
+.cal-pick { display: flex; gap: 8px; align-items: center; }
+.cal-pick select { min-height: 46px; font-weight: 800; font-size: 1.1rem; padding: 0 14px; border-radius: 999px; background: var(--surface); }
+@media (max-width: 760px) { .cal-pick select { font-size: 1rem; padding: 0 10px; } }
