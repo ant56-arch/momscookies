@@ -100,5 +100,5 @@
     document.forms['order-form'].addEventListener('input', render);
     document.forms['order-form'].addEventListener('submit', (e) => e.preventDefault());
     $('send-btn').addEventListener('click', send);
-  }).catch(() => { document.querySelector('.hero p').textContent = 'Could not load site data. If you opened index.html directly, use the published site or a local server.'; });
+  }).catch(() => { document.querySelector('.hero p').textContent = 'Could not load site data. If you opened this page directly from a file, use the published site or a local server.'; });
 })();

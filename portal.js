@@ -20,6 +20,33 @@
     const [y, m, d] = s.split('-').map(Number);
     return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   };
+
+  // ---------- wording helpers ----------
+  const plural = (n, one, many) => `${Number(n).toLocaleString()} ${Number(n) === 1 ? one : many || one + 's'}`;
+  const cookiesOf = (q) => (q == null || q === '' ? '? cookies' : plural(+q, 'cookie'));
+  const SMALL_WORDS = new Set(['a', 'an', 'and', 'at', 'by', 'for', 'in', 'of', 'on', 'or', 'the', 'to', 'vs', 'with']);
+  const tidySpace = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
+  const upFirst = (v) => v.charAt(0).toUpperCase() + v.slice(1);
+  const titleCase = (v) => v.toLowerCase().split(' ').map((w, i) => (i > 0 && SMALL_WORDS.has(w) ? w
+    : w.replace(/(^|[/(\-])([a-z])/g, (m, a, b) => a + b.toUpperCase()))).join(' ');
+  const allLower = (v) => /[a-z]/.test(v) && v === v.toLowerCase();
+  const fixName = (v) => { v = tidySpace(v); return allLower(v) ? titleCase(v) : upFirst(v); };
+  const fixEvent = (v) => { v = tidySpace(v).replace(/[,;]+$/, ''); return allLower(v) ? titleCase(v) : upFirst(v); };
+  const fixSentence = (v) => upFirst(tidySpace(v).replace(/\s+([,.;:!?])/g, '$1').replace(/[,;]+$/, ''));
+  const fixReason = (v) => fixSentence(v).replace(/^Didnt\b/i, "Didn't");
+  const TEXT_FIELDS = { name: fixName, event: fixEvent, colors: fixSentence, allergies: fixSentence, addOns: fixSentence, notes: fixSentence, reason: fixReason, contact: tidySpace };
+  const TEXT_LABELS = { name: 'Name', event: 'Event', colors: 'Colors', allergies: 'Allergies', addOns: 'Add-ons', notes: 'Notes', reason: 'Reason', contact: 'Contact' };
+  function tidyOrder(o) { for (const [f, fn] of Object.entries(TEXT_FIELDS)) if (typeof o[f] === 'string' && o[f]) o[f] = fn(o[f]); return o; }
+  function tidyChanges() {
+    const out = [];
+    for (const o of S.vault.orders) for (const [f, fn] of Object.entries(TEXT_FIELDS)) {
+      const v = o[f];
+      if (typeof v !== 'string' || !v) continue;
+      const to = fn(v);
+      if (to !== v) out.push({ o, f, from: v, to });
+    }
+    return out;
+  }
   const b64e = (u8) => { let s = ''; u8.forEach((b) => (s += String.fromCharCode(b))); return btoa(s); };
   const b64d = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
@@ -155,7 +182,7 @@
         const t = typeof pick === 'string' ? pick.trim() : '';
         reason = t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : '';
       } else if (due && due > today) status = 'Confirmed';
-      out.push({
+      const row = {
         id: crypto.randomUUID().slice(0, 8), name, contact: '', status, reason,
         requested: dt(g(r, 'Date Order Requested')), due,
         qty: numOrNull(g(r, 'Amt of Cookies')), price: numOrNull(g(r, 'Price Quoted/Each')),
@@ -167,7 +194,9 @@
         kind: str(g(r, 'Custom/Premade')), designs: numOrNull(g(r, '# of Designs')), numColors: numOrNull(g(r, '# of Colors')),
         myChoice: str(g(r, 'My choice of cookie')),
         notes: [str(g(r, 'Color Notes')), str(g(r, 'Notes'))].filter(Boolean).join(' · '),
-      });
+      };
+      tidyOrder(row);
+      out.push(row);
     }
     return out;
   }
@@ -324,10 +353,10 @@
   function orow(o) {
     const bal = balance(o), dec = o.status === 'Declined';
     return `<div class="orow st-${o.status}" data-id="${o.id}">
-      <span class="c-due">${esc(fmtDate(o.due)) || '<span class="muted">no date</span>'}</span>
-      <span class="c-name"><b>${esc(o.name)}</b>${num(o.rush) > 0 ? ' <span class="pill rush">⚡ rush</span>' : ''}${o.allergies ? ` <span class="pill warn" title="${esc(o.allergies)}">⚠ ${esc(o.allergies)}</span>` : ''}
+      <span class="c-due">${esc(fmtDate(o.due)) || '<span class="muted">No date</span>'}</span>
+      <span class="c-name"><b>${esc(o.name)}</b>${num(o.rush) > 0 ? ' <span class="pill rush">⚡ Rush</span>' : ''}${o.allergies ? ` <span class="pill warn" title="${esc(o.allergies)}">⚠ ${esc(o.allergies)}</span>` : ''}
         <small>${esc(dec ? o.reason : (o.event || o.type))}</small></span>
-      <span class="c-qty">${dec || o.qty == null ? '' : o.qty + ' ck'}</span>
+      <span class="c-qty">${dec || o.qty == null ? '' : o.qty}</span>
       <span class="c-total">${dec || o.amtDue == null ? '' : money(o.amtDue)}</span>
       <span class="c-paid">${dec || o.paid == null ? '' : money(o.paid)}${(o.payments || []).length > 1 ? `<small>${o.payments.length} payments</small>` : ''}</span>
       <span class="c-bal ${!dec && bal > 0.005 ? 'neg' : 'muted'}">${dec || o.amtDue == null ? '' : bal > 0.005 ? money(bal) + ' due' : '✓ paid'}</span>
@@ -351,8 +380,8 @@
     const live = list.filter((o) => o.status !== 'Declined');
     const tot = live.reduce((s, o) => s + num(o.amtDue), 0), paid = live.reduce((s, o) => s + num(o.paid), 0);
     $('#list').innerHTML = list.length
-      ? `<div class="orow ohead"><span>Due</span><span>Customer</span><span>Qty</span><span>Total</span><span>Paid</span><span>Balance</span><span>Status</span></div>${html}
-         <div class="otot"><span>${list.length} orders</span><span>${live.reduce((s, o) => s + num(o.qty), 0).toLocaleString()} cookies</span><span>${money(tot)} total</span><span>${money(paid)} paid</span><span>${money(live.filter(owes).reduce((a, o) => a + balance(o), 0))} owed</span></div>`
+      ? `<div class="orow ohead"><span>Due</span><span>Customer</span><span>Cookies</span><span>Total</span><span>Paid</span><span>Balance</span><span>Status</span></div>${html}
+         <div class="otot"><span>${plural(list.length, 'order')}</span><span>${plural(live.reduce((s, o) => s + num(o.qty), 0), 'cookie')}</span><span>${money(tot)} total</span><span>${money(paid)} paid</span><span>${money(live.filter(owes).reduce((a, o) => a + balance(o), 0))} owed</span></div>`
       : '<p style="padding:16px" class="muted">No orders match these filters.</p>';
   }
 
@@ -395,12 +424,12 @@
   const METHODS = ['', 'Cash', 'Venmo', 'Zelle', 'Check', 'Gift', 'Other'];
   const FIELDS = [
     ['#', 'Customer & status'],
-    ['name', 'Customer', 'text', { req: 1 }], ['contact', 'Phone / email', 'text'],
+    ['name', 'Customer', 'text', { req: 1 }], ['contact', 'Phone or email', 'text'],
     ['status', 'Status', 'select', { opts: STATUSES }], ['reason', 'Reason (if declined)', 'text'],
     ['#', 'Event & dates'],
     ['event', 'Event name / details', 'text'], ['type', 'Occasion', 'select', { opts: ['', ...OCCASIONS.map((x) => x[0])], hint: (o) => { const g = occasionOf(o); return !(o.type || '').trim() && g.source === 'guessed' ? `<small class="muted">Suggestion: ${esc(g.name)}</small>` : ''; } }],
-    ['requested', 'Date requested', 'date'], ['due', 'Pickup / due date', 'date'],
-    ['kind', 'Custom / Premade', 'select', { opts: ['', 'Custom', 'Premade'] }], ['designs', '# of designs', 'number', { step: '1' }],
+    ['requested', 'Date requested', 'date'], ['due', 'Pickup or due date', 'date'],
+    ['kind', 'Custom or premade', 'select', { opts: ['', 'Custom', 'Premade'] }], ['designs', '# of designs', 'number', { step: '1' }],
     ['#', 'Pricing'],
     ['qty', '# of cookies', 'number', { step: '1' }], ['price', 'Price each ($)', 'number', { step: '0.01' }],
     ['numColors', '# of colors', 'number', { step: '1' }], ['rush', 'Rush fee ($)', 'number', { step: '0.01' }],
@@ -507,7 +536,7 @@
         <input type="date" data-pf="date" value="${esc(x.date)}" aria-label="Payment date">
         <input type="number" step="0.01" min="0" data-pf="amount" value="${x.amount ?? ''}" placeholder="Amount" aria-label="Amount">
         <select data-pf="method" aria-label="Payment method">${mOpts(x.method)}</select>
-        <input data-pf="note" value="${esc(x.note)}" placeholder="Note (e.g. deposit)" aria-label="Note">
+        <input data-pf="note" value="${esc(x.note)}" placeholder="Note (for example, deposit)" aria-label="Note">
         <button type="button" class="icon-x" data-pdel="${i}" aria-label="Remove payment">×</button></div>`).join('') : '<p class="muted small" style="margin:0">No payments yet.</p>';
     };
     const drawSum = () => {
@@ -550,6 +579,7 @@
       e.preventDefault();
       if (!ef.elements.name.value.trim()) { ef.elements.name.focus(); return; }
       const data = read();
+      for (const [f, fn] of Object.entries(TEXT_FIELDS)) if (typeof data[f] === 'string') data[f] = fn(data[f]);
       let ord;
       if (id) { ord = byId(id); Object.assign(ord, data); }
       else { ord = { id: crypto.randomUUID().slice(0, 8), ...data }; S.vault.orders.push(ord); }
@@ -581,7 +611,7 @@
     const attention = [...overdue, ...undated];
     main.innerHTML = `<section class="hero-card">
         <div><h2>${greet}! 🍪</h2>
-          <p>${week.length ? `<b>${week.length}</b> pickup${week.length === 1 ? '' : 's'} in the next 7 days · <b>${week.reduce((s, o) => s + num(o.qty), 0)}</b> cookies to bake` : 'Nothing due in the next 7 days.'}</p></div>
+          <p>${week.length ? `<b>${week.length}</b> pickup${week.length === 1 ? '' : 's'} in the next 7 days · <b>${week.reduce((s, o) => s + num(o.qty), 0)}</b> ${week.reduce((s, o) => s + num(o.qty), 0) === 1 ? 'cookie' : 'cookies'} to bake` : 'Nothing due in the next 7 days.'}</p></div>
         <div class="qa"><button class="btn" data-new>+ New order</button><button class="btn ghost" data-tab="calculator">Calculator</button><button class="btn ghost" data-tab="calendar">Calendar</button></div>
       </section>
       <div class="kpis">
@@ -616,7 +646,7 @@
   function evRow(o) {
     return `<div class="ev st-${o.status}" data-id="${o.id}">
       <span class="who">${esc(o.name)}</span><span>${esc(o.event || o.type || '')}</span>
-      <span>${o.qty ?? '?'} cookies</span>${num(o.rush) > 0 ? '<span class="pill rush">rush</span>' : ''}
+      <span>${cookiesOf(o.qty)}</span>${num(o.rush) > 0 ? '<span class="pill rush">Rush</span>' : ''}
       <span class="pill st-${o.status}">${o.status}</span>
       ${balance(o) > 0.005 && o.amtDue != null ? `<span class="neg">${money(balance(o))} due</span>` : ''}</div>`;
   }
@@ -639,7 +669,7 @@
       const date = key(d), ev = byDay[date] || [];
       cells += `<div class="cd${date === today ? ' today' : ''}${date === S.calDay ? ' sel' : ''}" data-day="${date}">
         <div class="dn"><span>${d}</span><button class="add" data-newdate="${date}" aria-label="New order on ${date}" title="New order">+</button></div>
-        ${ev.slice(0, 3).map((o) => `<button class="cev st-${o.status}" data-id="${o.id}" title="${esc(o.name)} — ${o.qty ?? '?'} cookies">${num(o.rush) > 0 ? '⚡' : ''}${esc(short(o.name))} <b>${o.qty ?? ''}</b></button>`).join('')}
+        ${ev.slice(0, 3).map((o) => `<button class="cev st-${o.status}" data-id="${o.id}" title="${esc(o.name)} — ${cookiesOf(o.qty)}">${num(o.rush) > 0 ? '⚡' : ''}${esc(short(o.name))} <b>${o.qty ?? ''}</b></button>`).join('')}
         ${ev.length > 3 ? `<span class="more">+${ev.length - 3} more</span>` : ''}</div>`;
     }
     const sel = (byDay[S.calDay] || []);
@@ -656,8 +686,8 @@
         <label class="check"><input type="checkbox" id="cal-done"${showDone ? ' checked' : ''}> Show completed</label>
         <button class="btn small" data-new>+ New order</button>
       </div>
-      <p class="muted small">${list.length} orders · ${cookies.toLocaleString()} cookies · ${money(quoted)} quoted this month</p>
-      <div class="legend">${['Requested', 'Confirmed', 'Baking', 'Ready', 'Completed'].map((s) => `<span class="pill st-${s}">${s}</span>`).join('')} <span class="pill rush">⚡ rush</span></div>
+      <p class="muted small">${plural(list.length, 'order')} · ${plural(cookies, 'cookie')} · ${money(quoted)} quoted this month</p>
+      <div class="legend">${['Requested', 'Confirmed', 'Baking', 'Ready', 'Completed'].map((s) => `<span class="pill st-${s}">${s}</span>`).join('')} <span class="pill rush">⚡ Rush</span></div>
       <div class="cal" role="grid" aria-label="Orders by due date">
         ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((w) => `<div class="wd">${w}</div>`).join('')}${cells}</div>
       <div class="day">${esc(fmtDate(S.calDay))}${S.calDay === today ? ' · Today' : ''}
@@ -773,7 +803,7 @@
   function openLabelCheck() {
     const dlg = $('#dlg');
     const item = ({ o, current, suggest }, kind) => `<div class="lc-item">
-      <div class="lc-head"><b>${esc(o.name)}</b><span class="muted small">${esc(fmtDate(o.due || o.requested)) || 'no date'} · ${o.qty ?? '?'} cookies · ${money(o.paid ?? o.amtDue ?? 0)}</span></div>
+      <div class="lc-head"><b>${esc(o.name)}</b><span class="muted small">${esc(fmtDate(o.due || o.requested)) || 'No date'} · ${cookiesOf(o.qty)} · ${money(o.paid ?? o.amtDue ?? 0)}</span></div>
       <div class="lc-ev">“${esc(o.event || o.notes || o.colors)}”</div>
       <div class="lc-change"><span class="pill">${OCC_EMOJI[OCC_LEGACY[current.toLowerCase()] || current] || ''} ${esc(current)}</span><span aria-hidden="true">→</span><span class="pill lc-new">${OCC_EMOJI[suggest] || ''} ${esc(suggest)}</span></div>
       <div class="actions"><button class="btn small" data-use="${o.id}" data-kind="${kind}">Use ${esc(suggest)}</button>
@@ -787,9 +817,9 @@
         ${iss.wrong.length ? `<h3>Might be labeled wrong <span class="muted">(${iss.wrong.length})</span></h3>${iss.wrong.map((x) => item(x, 'wrong')).join('')}` : ''}
         ${iss.vague.length ? `<div class="lc-sec"><h3>Could be more specific <span class="muted">(${iss.vague.length})</span></h3>
           <button class="btn small" data-useall>Apply all ${iss.vague.length}</button></div>${iss.vague.map((x) => item(x, 'vague')).join('')}` : ''}
-        ${iss.tidy.length ? `<h3>Tidy names <span class="muted">(${iss.tidy.length} orders)</span></h3>
-          <div class="lc-item"><p style="margin:0">Same meaning, different spelling — e.g. ${[...new Set(iss.tidy.map((x) => `“${esc(x.current)}” → ${esc(x.suggest)}`))].slice(0, 5).join(', ')}.</p>
-          <div class="actions"><button class="btn small" data-tidy>Standardize ${iss.tidy.length} names</button></div></div>` : ''}
+        ${iss.tidy.length ? `<h3>Tidy names <span class="muted">(${plural(iss.tidy.length, 'order')})</span></h3>
+          <div class="lc-item"><p style="margin:0">Same meaning, different spelling — for example ${[...new Set(iss.tidy.map((x) => `“${esc(x.current)}” → ${esc(x.suggest)}`))].slice(0, 5).join(', ')}.</p>
+          <div class="actions"><button class="btn small" data-tidy>Standardize ${plural(iss.tidy.length, 'name')}</button></div></div>` : ''}
       </div>`;
       $('#lc').onclick = (e) => {
         const t = e.target;
@@ -811,6 +841,22 @@
     dlg.showModal();
   }
 
+  function openTidyText() {
+    const dlg = $('#dlg'), list = tidyChanges();
+    if (!list.length) return;
+    dlg.innerHTML = `<div class="tagger" id="tt"><div class="tg-top"><h2 style="margin:0">Tidy up text</h2><span style="flex:1"></span><button class="btn ghost small" data-x>Cancel</button></div>
+      <p class="muted">${plural(list.length, 'change')} to review. Nothing changes until you apply them.</p>
+      <div class="tt-list">${list.map((c) => `<div class="tt-row"><span class="muted small">${esc(TEXT_LABELS[c.f])} · ${esc(c.o.name)}</span>
+        <span><s>${esc(c.from)}</s> → <b>${esc(c.to)}</b></span></div>`).join('')}</div>
+      <div class="actions"><button class="btn" data-apply>Apply ${plural(list.length, 'change')}</button><button class="btn ghost" data-x>Cancel</button></div></div>`;
+    $('#tt').onclick = (e) => {
+      if (e.target.closest('[data-apply]')) { list.forEach((c) => (c.o[c.f] = c.to)); touch(); dlg.close(); render(); return; }
+      if (e.target.closest('[data-x]')) dlg.close();
+    };
+    dlg.onclose = () => { dlg.onclose = null; render(); };
+    dlg.showModal();
+  }
+
   function openTagger() {
     const queue = S.vault.orders.filter((o) => o.status === 'Completed' && !(o.type || '').trim())
       .sort((a, b) => (b.due || b.requested || '').localeCompare(a.due || a.requested || ''));
@@ -824,7 +870,7 @@
         const o = queue[i], g = occasionOf(o);
         dlg.innerHTML = `<div class="tagger" id="tg">
           <div class="tg-top"><span class="muted">${i + 1} of ${queue.length}</span><div class="tg-prog"><i style="width:${i / queue.length * 100}%"></i></div><button class="btn ghost small" data-x>Done</button></div>
-          <div class="tg-card"><b>${esc(o.name)}</b><span>${esc(fmtDate(o.due || o.requested)) || 'no date'} · ${o.qty ?? '?'} cookies · ${money(o.paid ?? o.amtDue ?? 0)}</span>
+          <div class="tg-card"><b>${esc(o.name)}</b><span>${esc(fmtDate(o.due || o.requested)) || 'No date'} · ${cookiesOf(o.qty)} · ${money(o.paid ?? o.amtDue ?? 0)}</span>
             ${o.event ? `<span>Event: ${esc(o.event)}</span>` : ''}${o.colors ? `<span>Colors: ${esc(o.colors)}</span>` : ''}${o.notes ? `<span class="muted">${esc(o.notes)}</span>` : ''}</div>
           <p class="muted small">What was the occasion?</p>
           <div class="tg-grid">${OCCASIONS.map(([n, e]) => `<button class="chip tg-btn${g.name === n ? ' sug' : ''}" data-occ="${esc(n)}"><span>${e}</span>${esc(n)}${g.name === n ? ' <small>suggested</small>' : ''}</button>`).join('')}</div>
@@ -886,7 +932,7 @@
 
     const cols = cur.map((m, i) => {
       const p = prev[i];
-      const tip = `${mName(i, 'long')} ${year}: ${money(m.rev)} collected · ${m.orders} order${m.orders === 1 ? '' : 's'} · ${m.cookies} cookies`
+      const tip = `${mName(i, 'long')} ${year}: ${money(m.rev)} collected · ${plural(m.orders, 'order')} · ${plural(m.cookies, 'cookie')}`
         + (m.up ? ` · ${money(m.up)} still to collect on ${m.upN} open order${m.upN === 1 ? '' : 's'}` : '') + (hasPrev ? ` · last year ${money(p.rev)}` : '');
       const label = m.rev > 0 ? short$(m.rev) : m.up > 0 ? '+' + short$(m.up) : '';
       const isNow = isThisYear && i === now.getMonth();
@@ -988,7 +1034,7 @@
             <label>Your cost per cookie ($)<input name="cost" type="number" min="0" step="0.01" value="${st.cost}"></label>
             <label class="check" style="grid-template-columns:auto 1fr;align-items:end"><input name="rush" type="checkbox"${st.rush ? ' checked' : ''}> Rush order</label>
           </div>
-          <p class="muted small">Base price comes from your site settings (${money(p.perCookie ?? 4.35)} each). Change "Price each" to quote a discount. Cost per cookie is about $0.27 from your Cookie Data sheet.</p>
+          <p class="muted small">Base price comes from your site settings (${money(p.perCookie ?? 4.35)} each). Change “Price each” to quote a discount. Cost per cookie is about $0.27 from your Cookie Data sheet.</p>
         </form>
         <div class="panel" id="cout" aria-live="polite"></div>
       </div>`;
@@ -1000,8 +1046,8 @@
       const costTotal = st.qty * st.cost;
       $('#cout').innerHTML = `<h3>Quote</h3>${c.parts.map(([l, a]) => `<div class="hbar" style="grid-template-columns:1fr auto"><span>${esc(l)}</span><span>${money(a)}</span></div>`).join('')}
         <div class="total-row"><span>Charge</span><strong>${money(c.total)}</strong></div>
-        <div class="hbar" style="grid-template-columns:1fr auto"><span class="muted">Est. ingredient cost</span><span>${money(costTotal)}</span></div>
-        <div class="hbar" style="grid-template-columns:1fr auto"><span class="muted">Est. profit before time</span><span><b>${money(c.total - costTotal)}</b></span></div>
+        <div class="hbar" style="grid-template-columns:1fr auto"><span class="muted">Estimated ingredient cost</span><span>${money(costTotal)}</span></div>
+        <div class="hbar" style="grid-template-columns:1fr auto"><span class="muted">Estimated profit before time</span><span><b>${money(c.total - costTotal)}</b></span></div>
         <div class="hbar" style="grid-template-columns:1fr auto"><span class="muted">Per cookie, all-in</span><span>${st.qty ? money(c.total / st.qty) : '—'}</span></div>
         <button class="btn full" id="calc-make" type="button">Create order from this quote</button>`;
       S.calcOut = { qty: st.qty, price: st.price, numColors: st.colors, rush: rush || null, addOnsAmt: st.addOns || null, amtDue: c.total };
@@ -1029,9 +1075,12 @@
         <div class="bar"><input id="nu" placeholder="Username" autocomplete="username"><input id="np" type="password" placeholder="New password (12+ chars)" autocomplete="new-password"><button class="btn small" id="pw-save">Change</button></div>
         <div class="err" id="pw-msg"></div></div>
       <div class="panel help" style="margin-top:16px"><h3>Import your Excel workbook</h3>
-        <p class="muted small">${S.vault.orders.length} orders are in the portal now. Importing reads your .xlsx in this browser (it is not uploaded) and <b>replaces</b> the orders and reference sheets.</p>
+        <p class="muted small">${plural(S.vault.orders.length, 'order')} ${S.vault.orders.length === 1 ? 'is' : 'are'} in the portal now. Importing reads your .xlsx in this browser (it is not uploaded) and <b>replaces</b> the orders and reference sheets.</p>
         <div class="bar"><input id="imp-file" type="file" accept=".xlsx,.xls"><button class="btn small" id="imp-go">Import</button></div>
         <div class="err" id="imp-msg" role="status"></div></div>
+      <div class="panel help" style="margin-top:16px"><h3>Tidy up text</h3>
+        <p class="muted small">Fixes capitalization and extra spaces in names, event names, colors and notes. For example, “baby shower/reveal” becomes “Baby Shower/Reveal”. You can review every change first.</p>
+        ${tidyChanges().length ? `<button class="btn ghost small" data-tidytext>Review ${plural(tidyChanges().length, 'change')}</button>` : '<p class="ok">✓ Everything looks tidy.</p>'}</div>
       <div class="panel help" style="margin-top:16px"><h3>Backup</h3>
         <p class="muted small">Download an encrypted copy of everything (needs your login to open).</p>
         <button class="btn ghost small" id="backup">Download encrypted backup</button></div>`;
@@ -1050,6 +1099,7 @@
     if (t.id === 'lock' || t.closest('#lock-more')) { if (S.dirty && !confirm('You have unsaved changes. Lock anyway?')) return; S.dirty = false; location.reload(); return; }
     if (t.closest('[data-new]')) { openEdit(null); return; }
     if (t.closest('[data-tag]')) { openTagger(); return; }
+    if (t.closest('[data-tidytext]')) { openTidyText(); return; }
     if (t.closest('[data-check]')) { openLabelCheck(); return; }
     const osc = t.closest('[data-occscope]');
     if (osc) { S.occScope = osc.dataset.occscope; render(); return; }
@@ -1093,12 +1143,12 @@
     if (t.id === 'imp-go') {
       const f = $('#imp-file').files[0], msg = $('#imp-msg');
       if (!f) { msg.textContent = 'Choose your .xlsx file first.'; return; }
-      if (S.vault.orders.length && !confirm(`Replace the ${S.vault.orders.length} orders in the portal with the workbook's orders? Edits you made here will be lost.`)) return;
+      if (S.vault.orders.length && !confirm(`Replace the ${plural(S.vault.orders.length, 'order')} in the portal with the workbook's orders? Edits you made here will be lost.`)) return;
       msg.textContent = 'Importing…';
       try {
         const d = await importWorkbook(f);
         S.vault.orders = d.orders; S.vault.ref = d.ref; touch();
-        msg.className = 'ok'; msg.textContent = `Imported ${d.orders.length} orders.`;
+        msg.className = 'ok'; msg.textContent = `Imported ${plural(d.orders.length, 'order')}.`;
         setTimeout(render, 1200);
       } catch (ex) { msg.className = 'err'; msg.textContent = 'Import failed: ' + (ex.message || ex); }
       return;
