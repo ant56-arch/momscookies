@@ -329,7 +329,7 @@
         <small>${esc(dec ? o.reason : (o.event || o.type))}</small></span>
       <span class="c-qty">${dec || o.qty == null ? '' : o.qty + ' ck'}</span>
       <span class="c-total">${dec || o.amtDue == null ? '' : money(o.amtDue)}</span>
-      <span class="c-paid">${dec || o.paid == null ? '' : money(o.paid)}</span>
+      <span class="c-paid">${dec || o.paid == null ? '' : money(o.paid)}${(o.payments || []).length > 1 ? `<small>${o.payments.length} payments</small>` : ''}</span>
       <span class="c-bal ${!dec && bal > 0.005 ? 'neg' : 'muted'}">${dec || o.amtDue == null ? '' : bal > 0.005 ? money(bal) + ' due' : '✓ paid'}</span>
       <span class="c-st"><select class="st-sel st-${o.status}" data-sid="${o.id}" aria-label="Status">${STATUSES.map((s) => `<option${s === o.status ? ' selected' : ''}>${s}</option>`).join('')}</select></span>
     </div>`;
@@ -360,7 +360,8 @@
     const list = filtered().sort(SORTS[S.sort] || SORTS.newest);
     const cols = FIELDS.filter((f) => f[0][0] !== '#' && f[0][0] !== '@');
     const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const csv = [cols.map((c) => q(c[1])).join(','), ...list.map((o) => cols.map((c) => q(o[c[0]])).join(','))].join('\r\n');
+    const det = (o) => (o.payments || []).map((x) => `${x.date || '?'} ${money(x.amount)} ${x.method || ''} ${x.note || ''}`.trim()).join('; ');
+    const csv = [[...cols.map((c) => q(c[1])), q('Payment details')].join(','), ...list.map((o) => [...cols.map((c) => q(o[c[0]])), q(det(o))].join(','))].join('\r\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     a.download = `orders-${todayISO()}.csv`; a.click();
@@ -406,7 +407,7 @@
     ['addOns', 'Add-ons', 'text'], ['addOnsAmt', 'Add-ons amount ($)', 'number', { step: '0.01' }],
     ['amtDue', 'Amount due ($)', 'number', { step: '0.01' }],
     ['#', 'Payment'],
-    ['paid', 'Amount paid ($)', 'number', { step: '0.01' }], ['method', 'Payment method', 'select', { opts: METHODS }],
+    ['paid', 'Amount paid ($)', 'number', { step: '0.01', hide: 1 }], ['method', 'Payment method', 'select', { opts: METHODS, hide: 1 }],
     ['@pay', '', 'pay'],
     ['#', 'Details'],
     ['colors', 'Special colors', 'text'], ['allergies', 'Allergies', 'text'],
@@ -432,7 +433,8 @@
     const dlg = $('#dlg');
     const fld = ([k, label, type, x = {}]) => {
       if (k === '#') return `<h3 class="fh">${label}</h3>`;
-      if (k === '@pay') return '<div class="paybox wide" id="paybox"></div>';
+      if (x.hide) return '';
+      if (k === '@pay') return '<div class="paybox wide" id="paybox"><div class="paysum" id="paysum"></div><div class="paylist" id="paylist"></div><div class="payact" id="payact"></div><div class="muted small" id="pay-msg" role="status"></div></div>';
       const v = o[k] ?? '';
       const cls = x.wide ? ' class="wide"' : '';
       if (type === 'select') {
@@ -464,8 +466,8 @@
     const ef = $('#ef');
     const read = () => {
       const out = {};
-      for (const [k, , type] of FIELDS) {
-        if (k === '#' || k === '@pay') continue;
+      for (const [k, , type, x = {}] of FIELDS) {
+        if (k === '#' || k === '@pay' || x.hide) continue;
         const v = ef.elements[k].value;
         out[k] = type === 'number' ? (v === '' ? null : +v) : v.trim();
       }
@@ -476,39 +478,68 @@
       $('#calc').innerHTML = c.parts.map(([l, a]) => `${esc(l)}: ${money(a)}`).join(' · ') + `<br><b>Total ${money(c.total)}</b>`;
       return c;
     };
-    $('#b-calc').onclick = () => { const c = showCalc(); ef.elements.amtDue.value = c.total; };
+    $('#b-calc').onclick = () => { const c = showCalc(); ef.elements.amtDue.value = c.total; drawSum(); };
     $('#b-rush').onclick = () => {
       const p = calc(read()).p;
       ef.elements.rush.value = Math.ceil(num(ef.elements.qty.value) / 12) * (p.rushPerDozen ?? 5);
       showCalc();
     };
-    let prevPaid = ef.elements.paid.value;
-    const payBox = () => {
-      const due = num(ef.elements.amtDue.value), paid = num(ef.elements.paid.value), bal = Math.round((due - paid) * 100) / 100;
-      const full = due > 0 && bal <= 0.005;
-      $('#paybox').innerHTML = `<div class="paysum">
-          <span>Due <b>${money(due)}</b></span><span>Paid <b>${money(paid)}</b></span>
-          <span>Balance <b class="${full ? 'ok' : bal > 0 ? 'neg' : ''}">${full ? '✓ none' : money(Math.max(bal, 0))}</b></span></div>
-        <div class="payact">${full
-          ? '<span class="pill paidfull">✓ Paid in full</span> <button type="button" class="btn ghost small" id="b-unpay">Undo</button>'
-          : '<button type="button" class="btn" id="b-payfull">Paid in full</button>'}<span class="muted small" id="pay-msg"></span></div>`;
+    // ----- payments ledger (split payments) -----
+    const r2 = (n) => Math.round(n * 100) / 100;
+    let pays = (o.payments || []).map((x) => ({ ...x }));
+    if (!pays.length && num(o.paid) > 0) pays = [{ date: '', amount: num(o.paid), method: o.method || '', note: 'Earlier total' }];
+    let payTouched = false;
+    const paidSum = () => r2(pays.reduce((t, x) => t + num(x.amount), 0));
+    const mOpts = (cur) => {
+      const hit = METHODS.find((m) => m && m.toLowerCase() === String(cur || '').toLowerCase());
+      const c = hit || cur || '';
+      return (c && !METHODS.includes(c) ? [...METHODS, c] : METHODS).map((m) => `<option value="${esc(m)}"${m === c ? ' selected' : ''}>${m === '' ? 'Method' : esc(m)}</option>`).join('');
     };
-    const applyPaid = (v) => {
-      ef.elements.paid.value = v;
-      if (id) { byId(id).paid = v === '' ? null : +v; touch(); render(); }
-      payBox();
+    const applyPays = (ord) => {
+      ord.payments = pays.map((x) => ({ date: x.date || '', amount: num(x.amount), method: x.method || '', note: (x.note || '').trim() })).filter((x) => x.amount || x.note);
+      ord.paid = ord.payments.length ? paidSum() : null;
+      const ms = [...new Set(ord.payments.map((x) => x.method).filter(Boolean))];
+      ord.method = ms.length > 1 ? 'Multiple' : ms[0] || '';
     };
-    ef.addEventListener('input', (e) => { if (e.target.name === 'amtDue' || e.target.name === 'paid') payBox(); });
-    $('#paybox').addEventListener('click', (e) => {
-      if (e.target.id === 'b-payfull') {
-        if (!num(ef.elements.amtDue.value)) { payBox(); $('#pay-msg').textContent = 'Enter the amount due first (try "Calculate total").'; return; }
-        prevPaid = ef.elements.paid.value;
-        applyPaid(ef.elements.amtDue.value);
-        if (!ef.elements.method.value) ef.elements.method.focus();
-      }
-      if (e.target.id === 'b-unpay') applyPaid(prevPaid === ef.elements.amtDue.value ? '' : prevPaid);
+    const persist = () => { payTouched = true; if (id) { applyPays(byId(id)); touch(); } };
+    const drawRows = () => {
+      $('#paylist').innerHTML = pays.length ? pays.map((x, i) => `<div class="payrow" data-pi="${i}">
+        <input type="date" data-pf="date" value="${esc(x.date)}" aria-label="Payment date">
+        <input type="number" step="0.01" min="0" data-pf="amount" value="${x.amount ?? ''}" placeholder="Amount" aria-label="Amount">
+        <select data-pf="method" aria-label="Payment method">${mOpts(x.method)}</select>
+        <input data-pf="note" value="${esc(x.note)}" placeholder="Note (e.g. deposit)" aria-label="Note">
+        <button type="button" class="icon-x" data-pdel="${i}" aria-label="Remove payment">×</button></div>`).join('') : '<p class="muted small" style="margin:0">No payments yet.</p>';
+    };
+    const drawSum = () => {
+      const due = num(ef.elements.amtDue.value), paid = paidSum(), bal = r2(due - paid), full = due > 0 && bal <= 0.005;
+      $('#paysum').innerHTML = `<span>Due <b>${money(due)}</b></span><span>Paid <b>${money(paid)}</b>${pays.length > 1 ? ` <span class="muted small">(${pays.length} payments)</span>` : ''}</span>
+        <span>Balance <b class="${full ? 'ok' : bal > 0 ? 'neg' : ''}">${full ? '✓ none' : bal < 0 ? 'Overpaid ' + money(-bal) : money(bal)}</b></span>`;
+      $('#payact').innerHTML = `${full ? '<span class="pill paidfull">✓ Paid in full</span>' : due > 0 && bal > 0 ? `<button type="button" class="btn" data-pfull>Paid in full · ${money(bal)}</button>` : ''}
+        ${!pays.length && due > 0 ? `<button type="button" class="btn ghost" data-pdep>Deposit 50% · ${money(due / 2)}</button>` : ''}
+        <button type="button" class="btn ghost" data-padd>+ Add payment</button>`;
+    };
+    const lastMethod = () => [...pays].reverse().find((x) => x.method)?.method || '';
+    const addPay = (amount, note) => {
+      pays.push({ date: todayISO(), amount: r2(amount), method: lastMethod(), note: note || '' });
+      persist(); drawRows(); drawSum(); render();
+      const last = $('#paylist').querySelector('.payrow:last-child [data-pf=method]'); if (last && !last.value) last.focus();
+    };
+    drawRows(); drawSum();
+    ef.addEventListener('input', (e) => {
+      if (e.target.name === 'amtDue') drawSum();
+      const row = e.target.closest('.payrow');
+      if (row && e.target.dataset.pf) { pays[+row.dataset.pi][e.target.dataset.pf] = e.target.value; persist(); drawSum(); }
     });
-    payBox();
+    ef.addEventListener('change', (e) => { if (e.target.closest('.payrow')) render(); });
+    $('#paybox').addEventListener('click', (e) => {
+      const t = e.target, due = num(ef.elements.amtDue.value), bal = r2(due - paidSum());
+      $('#pay-msg').textContent = '';
+      if (t.closest('[data-pfull]')) { if (bal > 0) addPay(bal, ''); return; }
+      if (t.closest('[data-pdep]')) { addPay(due / 2, 'Deposit'); return; }
+      if (t.closest('[data-padd]')) { if (!due) $('#pay-msg').textContent = 'Tip: enter the amount due first so the balance is right.'; addPay(Math.max(bal, 0), ''); return; }
+      const del = t.closest('[data-pdel]');
+      if (del) { pays.splice(+del.dataset.pdel, 1); persist(); drawRows(); drawSum(); render(); }
+    });
     $('#b-cancel').onclick = () => dlg.close();
     if (id) $('#b-del').onclick = () => {
       if (!confirm(`Delete the order for ${o.name}? This can't be undone.`)) return;
@@ -519,8 +550,10 @@
       e.preventDefault();
       if (!ef.elements.name.value.trim()) { ef.elements.name.focus(); return; }
       const data = read();
-      if (id) Object.assign(byId(id), data);
-      else S.vault.orders.push({ id: crypto.randomUUID().slice(0, 8), ...data });
+      let ord;
+      if (id) { ord = byId(id); Object.assign(ord, data); }
+      else { ord = { id: crypto.randomUUID().slice(0, 8), ...data }; S.vault.orders.push(ord); }
+      if (payTouched || !id) applyPays(ord);
       dlg.close(); touch(); render();
     });
     dlg.showModal();

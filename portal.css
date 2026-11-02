@@ -432,3 +432,16 @@ dialog::backdrop { background: rgba(30, 15, 8, .55); }
 .lc-change { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .lc-change .pill { font-size: .9rem; padding: 4px 12px; }
 .lc-new { background: color-mix(in srgb, var(--good) 18%, var(--surface)); border-color: color-mix(in srgb, var(--good) 50%, transparent); }
+
+/* ----- payments ledger ----- */
+.paylist { display: grid; gap: 8px; }
+.payrow { display: grid; grid-template-columns: 150px 116px 140px minmax(0, 1fr) 44px; gap: 8px; align-items: center; }
+.payrow input, .payrow select { min-height: 42px; padding: 6px 10px; width: 100%; }
+.icon-x { width: 40px; height: 40px; border-radius: 50%; border: 1.5px solid var(--border); background: var(--surface); color: var(--danger); font-size: 1.4rem; line-height: 1; cursor: pointer; }
+.icon-x:hover { background: var(--alt); }
+.c-paid small { display: block; color: var(--muted); font-size: .75rem; }
+@media (max-width: 760px) {
+  .payrow { grid-template-columns: 1fr 1fr 44px; grid-template-areas: "d a x" "m n n"; }
+  .payrow [data-pf=date] { grid-area: d; } .payrow [data-pf=amount] { grid-area: a; } .payrow [data-pf=method] { grid-area: m; }
+  .payrow [data-pf=note] { grid-area: n; } .payrow .icon-x { grid-area: x; }
+}
