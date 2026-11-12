@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
-  <meta name="theme-color" content="#4a2a18">
+  <meta name="theme-color" content="#faf6f0">
   <meta name="color-scheme" content="light dark">
   <meta name="description" content="Owner portal for Gina's Cookie Jar.">
   <link rel="manifest" href="manifest.webmanifest">
@@ -24,9 +24,9 @@
   <title>Gina's Cookie Jar · Owner Portal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Pacifico&display=swap">
-  <link rel="stylesheet" href="styles.css?v=31">
-  <link rel="stylesheet" href="portal.css?v=31">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="styles.css?v=32">
+  <link rel="stylesheet" href="portal.css?v=32">
 </head>
 <body class="portal">
   <a class="skip" href="#main">Skip to content</a>
@@ -42,6 +42,12 @@
       <symbol id="i-orders" viewBox="0 0 24 24"><rect x="5" y="3.5" width="14" height="17.5" rx="2.5"/><path d="M9 8.5h6M9 12.5h6M9 16.5h3.5"/></symbol>
       <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
       <symbol id="i-money" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M14.6 9.2c-.5-.9-1.5-1.4-2.6-1.4-1.4 0-2.5.8-2.5 2s1 1.7 2.5 2.1 2.5.9 2.5 2.1-1.1 2-2.5 2c-1.1 0-2.1-.5-2.6-1.4M12 6v1.8M12 16.4V18"/></symbol>
+      <symbol id="i-photo" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10.5" r="1.6"/><path d="M4 17.5l4.5-4.5 3.5 3.5 2.5-2.5 5.5 5"/></symbol>
+      <symbol id="i-calc" viewBox="0 0 24 24"><rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M8.5 7.5h7"/><path d="M8.6 12h.01M12 12h.01M15.4 12h.01M8.6 16h.01M12 16h.01M15.4 16h.01" stroke-width="2.4"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M5.5 5a2 2 0 0 1 2-2H18.5v15H7.5a2 2 0 0 0-2 2z"/><path d="M5.5 20a2 2 0 0 0 2 2H18.5v-4"/><path d="M9.5 7.5h5.5"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><path d="M4 7h9M17.5 7H20M4 12h2.5M11 12h9M4 17h10.5M19 17h1"/><circle cx="15.2" cy="7" r="2.2"/><circle cx="8.8" cy="12" r="2.2"/><circle cx="16.8" cy="17" r="2.2"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5"/></symbol>
+      <symbol id="i-trend" viewBox="0 0 24 24"><path d="M4 17l5-5 4 3 7-8"/><path d="M15 7h5v5"/></symbol>
       <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18.5" cy="12" r="1.6"/></symbol>
     </defs>
   </svg>
@@ -55,17 +61,17 @@
         <span class="brand-name">Gina's Cookie Jar</span>
       </a>
       <nav id="tabs" class="p-tabs" aria-label="Sections">
-        <button data-tab="home">Home</button>
-        <button data-tab="orders">Orders</button>
-        <button data-tab="calendar">Calendar</button>
-        <button data-tab="photos">Photos</button>
-        <button data-tab="money">Money</button>
-        <button data-tab="calculator">Calculator</button>
-        <button data-tab="workbook">Workbook</button>
-        <button data-tab="settings">Settings</button>
+        <button data-tab="home"><svg class="ic"><use href="#i-home"/></svg><span>Home</span></button>
+        <button data-tab="orders"><svg class="ic"><use href="#i-orders"/></svg><span>Orders</span></button>
+        <button data-tab="calendar"><svg class="ic"><use href="#i-cal"/></svg><span>Calendar</span></button>
+        <button data-tab="photos"><svg class="ic"><use href="#i-photo"/></svg><span>Photos</span></button>
+        <button data-tab="money"><svg class="ic"><use href="#i-money"/></svg><span>Money</span></button>
+        <button data-tab="calculator"><svg class="ic"><use href="#i-calc"/></svg><span>Calculator</span></button>
+        <button data-tab="workbook"><svg class="ic"><use href="#i-book"/></svg><span>Workbook</span></button>
+        <button data-tab="settings"><svg class="ic"><use href="#i-gear"/></svg><span>Settings</span></button>
       </nav>
       <span id="savestate" class="savestate" role="status"></span>
-      <button id="lock" class="lock-btn" type="button">Lock</button>
+      <button id="lock" class="lock-btn" type="button"><svg class="ic"><use href="#i-lock"/></svg><span>Lock</span></button>
     </header>
 
     <main id="main" class="p-main" tabindex="-1"></main>
@@ -81,6 +87,6 @@
 
   <dialog id="dlg"></dialog>
   <dialog id="dlg2"></dialog>
-  <script src="portal.js?v=31"></script>
+  <script src="portal.js?v=32"></script>
 </body>
 </html>

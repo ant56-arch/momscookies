@@ -59,7 +59,7 @@
   function applyTheme() {
     const p = themePref(), t = p === 'auto' ? (darkMq.matches ? 'dark' : 'light') : p;
     document.documentElement.dataset.theme = t;
-    const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = t === 'dark' ? '#130c08' : '#4a2a18';
+    const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = t === 'dark' ? '#171210' : '#faf6f0';
   }
   darkMq.addEventListener('change', applyTheme);
   applyTheme();
@@ -84,6 +84,7 @@
   const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const withTransition = (fn) => (document.startViewTransition && !reducedMotion() ? document.startViewTransition(fn) : fn());
 
+  const ico = (n) => `<svg class="ic" aria-hidden="true"><use href="#i-${n}"/></svg>`;
   const b64e = (u8) => { let s = ''; u8.forEach((b) => (s += String.fromCharCode(b))); return btoa(s); };
   const b64d = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
@@ -823,16 +824,16 @@
     }).join('');
     const recent = [...photos()].sort((a, b) => (b.added || '').localeCompare(a.added || '') || (b.date || '').localeCompare(a.date || '')).slice(0, 6);
     main.innerHTML = `<section class="hero-card">
-        <div><h2>${greet}! 🍪</h2>
+        <div><p class="eyebrow">${now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h2>${greet}</h2>
           <p>${week.length ? `<b>${week.length}</b> pickup${week.length === 1 ? '' : 's'} in the next 7 days · <b>${week.reduce((s, o) => s + num(o.qty), 0)}</b> ${week.reduce((s, o) => s + num(o.qty), 0) === 1 ? 'cookie' : 'cookies'} to bake` : 'Nothing due in the next 7 days.'}</p></div>
         <div class="qa"><button class="btn" data-new>+ New order</button><button class="btn ghost" data-tab="calculator">Calculator</button><button class="btn ghost" data-tab="calendar">Calendar</button></div>
       </section>
       <div class="daystrip" aria-label="Next 7 days">${strip}</div>
       <div class="kpis">
-        <div class="kpi"><span class="kic">📋</span><b>${active.length}</b><span>Active orders</span></div>
-        <div class="kpi"><span class="kic">💸</span><b class="${owed.length ? 'neg' : ''}">${money(owed.reduce((s, o) => s + balance(o), 0))}</b><span>Owed to you (${owed.length})</span></div>
-        <div class="kpi"><span class="kic">📅</span><b>${money(sumPaid(today.slice(0, 7)))}</b><span>Collected in ${now.toLocaleDateString(undefined, { month: 'long' })}</span></div>
-        <div class="kpi"><span class="kic">🏆</span><b>${money(sumPaid(today.slice(0, 4)))}</b><span>Collected in ${now.getFullYear()}</span></div>
+        <div class="kpi"><span class="kic">${ico('orders')}</span><b>${active.length}</b><span>Active orders</span></div>
+        <div class="kpi"><span class="kic">${ico('money')}</span><b class="${owed.length ? 'neg' : ''}">${money(owed.reduce((s, o) => s + balance(o), 0))}</b><span>Owed to you (${owed.length})</span></div>
+        <div class="kpi"><span class="kic">${ico('cal')}</span><b>${money(sumPaid(today.slice(0, 7)))}</b><span>Collected in ${now.toLocaleDateString(undefined, { month: 'long' })}</span></div>
+        <div class="kpi"><span class="kic">${ico('trend')}</span><b>${money(sumPaid(today.slice(0, 4)))}</b><span>Collected in ${now.getFullYear()}</span></div>
       </div>
       <div class="panels">
         <div class="panel"><h3>Coming up</h3>
@@ -853,11 +854,11 @@
   function viewMore(main) {
     const card = (tab, icon, title, text) => `<button class="linkcard" data-tab="${tab}"><span class="emo">${icon}</span><b>${title}</b><span class="muted">${text}</span></button>`;
     main.innerHTML = `<h2>More</h2><div class="linkcards">
-      ${card('photos', '📷', 'Photos', 'Your cookie photos and inspiration')}
-      ${card('calculator', '🧮', 'Price calculator', 'Quote a set of cookies')}
-      ${card('workbook', '📒', 'Workbook', 'Recipe and cost sheets')}
-      ${card('settings', '⚙️', 'Settings', 'Saving, password, import, backup')}
-      <button class="linkcard" id="lock-more"><span class="emo">🔒</span><b>Lock</b><span class="muted">Sign out on this device</span></button></div>`;
+      ${card('photos', ico('photo'), 'Photos', 'Your cookie photos and inspiration')}
+      ${card('calculator', ico('calc'), 'Price calculator', 'Quote a set of cookies')}
+      ${card('workbook', ico('book'), 'Workbook', 'Recipe and cost sheets')}
+      ${card('settings', ico('gear'), 'Settings', 'Saving, password, import, backup')}
+      <button class="linkcard" id="lock-more"><span class="emo">${ico('lock')}</span><b>Lock</b><span class="muted">Sign out on this device</span></button></div>`;
   }
 
   /* ---------- calendar ---------- */
@@ -1546,7 +1547,7 @@
       else { S.tab = 'settings'; render(); window.scrollTo(0, 0); }
       return;
     }
-    if (t.id === 'lock' || t.closest('#lock-more')) { if (S.dirty && !confirm('You have unsaved changes. Lock anyway?')) return; S.dirty = false; location.reload(); return; }
+    if (t.closest('#lock, #lock-more')) { if (S.dirty && !confirm('You have unsaved changes. Lock anyway?')) return; S.dirty = false; location.reload(); return; }
     if (t.closest('[data-new]')) { openEdit(null); return; }
     if (t.closest('[data-tag]')) { openTagger(); return; }
     const th = t.closest('[data-theme-set]');
