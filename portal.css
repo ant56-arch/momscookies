@@ -819,3 +819,9 @@ dialog, #dlg2 { border-radius: 18px; box-shadow: var(--shadow-lg); border: 1px s
   .orr .oc { grid-area: oc; text-align: left; font-size: .85rem; } .orr .oa { grid-area: oa; font-size: .85rem; }
   .orr.ohd { display: none; }
 }
+
+/* ----- readability fixes (contrast) ----- */
+:root { --accent: #a9531f; --accent-dark: #86431a; --muted: #6c6157; }
+:root[data-theme="dark"] .portal .btn:not(.ghost):not(.danger), :root[data-theme="dark"] .btn:not(.ghost):not(.danger),
+:root[data-theme="dark"] .chip[aria-selected="true"], :root[data-theme="dark"] .seg button[aria-pressed="true"],
+:root[data-theme="dark"] .cd.today .dn span, :root[data-theme="dark"] .hero-card .btn:not(.ghost) { color: #1b130e; }

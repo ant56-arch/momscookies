@@ -128,6 +128,7 @@
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64d(env.iv) }, key, b64d(env.data));
     S.key = key; S.salt = salt; S.iter = env.iter;
     S.vault = JSON.parse(new TextDecoder().decode(plain));
+    S.loaded = JSON.stringify(env);
   }
 
   // Phone keyboards often capitalize the first letter or add a trailing space, so try the
@@ -152,7 +153,11 @@
     if (r.status === 404) return null;
     if (!r.ok) throw new Error('GitHub ' + r.status);
     const j = await r.json();
-    if (!j.content) throw new Error('File too large for API');
+    if (!j.content) {
+      const rr = await fetch(`${api}?ref=${CFG.branch}&t=${Date.now()}`, { headers: { ...hdr(), Accept: 'application/vnd.github.raw+json' }, cache: 'no-store' });
+      if (!rr.ok) throw new Error('GitHub ' + rr.status);
+      return { sha: j.sha, text: await rr.text() };
+    }
     return { sha: j.sha, text: atob(j.content.replace(/\n/g, '')) };
   }
   async function ghPut(text, sha) {
@@ -252,6 +257,31 @@
   const photoCount = (orderId) => photos().filter((p) => p.orderId === orderId).length;
   const photoById = (id) => photos().find((p) => p.id === id);
 
+  const normEnv = (txt) => { try { return JSON.stringify(JSON.parse(txt)); } catch { return txt; } };
+  // Take in a newer version saved by another device (same login).
+  async function adoptRemote(g) {
+    const env = JSON.parse(g.text);
+    if (env.salt !== b64e(S.salt) || env.iter !== S.iter) throw Object.assign(new Error('rekeyed'), { rekeyed: true });
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64d(env.iv) }, S.key, b64d(env.data));
+    S.vault = JSON.parse(new TextDecoder().decode(plain)); S.sha = g.sha; S.loaded = normEnv(g.text);
+  }
+  let rekeyWarned = false;
+  async function refreshFromRemote() {
+    if (!S.vault || !tok() || S.dirty || saving || !navigator.onLine || document.querySelector('dialog[open]')) return;
+    try {
+      const g = await ghGet();
+      if (!g || g.sha === S.sha) return;
+      if (normEnv(g.text) === S.loaded) { S.sha = g.sha; return; }
+      if (S.dirty || saving || document.querySelector('dialog[open]')) return;
+      await adoptRemote(g); render(); setSave('saved');
+      toast('Updated with changes from your other device.');
+    } catch (e) {
+      if (e.rekeyed && !rekeyWarned) { rekeyWarned = true; toast('Your username or password was changed on another device. Lock and log in again to see the latest data.', { kind: 'bad', ms: 9000 }); }
+    }
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFromRemote(); });
+  setInterval(refreshFromRemote, 180000);
+  let conflictWarned = false;
   let saving = false, again = false, timer = null, retryTimer = null;
   window.addEventListener('online', () => { if (S.vault && S.dirty) save(); else if (S.vault) setSave(tok() ? 'saved' : 'local'); });
   window.addEventListener('offline', () => { if (S.vault) setSave('offline'); });
@@ -279,11 +309,16 @@
     saving = true; setSave('saving');
     try {
       const text = await seal();
-      if (!S.sha) { const g = await ghGet(); S.sha = g ? g.sha : undefined; }
+      if (!S.sha) {
+        const g = await ghGet();
+        if (g && normEnv(g.text) !== S.loaded) throw Object.assign(new Error('conflict'), { conflict: true }); // GitHub has something newer
+        S.sha = g ? g.sha : undefined;
+      }
       S.sha = await withLock(() => ghPut(text, S.sha));
-      S.dirty = false; setSave('saved');
+      S.loaded = normEnv(text); S.dirty = false; setSave('saved');
     } catch (e) {
       setSave(e.conflict ? 'conflict' : e.auth ? 'auth' : navigator.onLine ? 'error' : 'offline');
+      if (e.conflict && !conflictWarned) { conflictWarned = true; toast('Another device saved newer changes, so nothing was overwritten. Tap “Changed elsewhere” at the top to load them.', { kind: 'bad', ms: 10000 }); }
       if (!e.conflict && !e.auth) { clearTimeout(retryTimer); retryTimer = setTimeout(() => { if (S.dirty) save(); }, 20000); } // try again shortly
     } finally {
       saving = false;
@@ -590,7 +625,7 @@
   function exportCsv() {
     const list = filtered().sort(SORTS[S.sort] || SORTS.newest);
     const cols = FIELDS.filter((f) => f[0][0] !== '#' && f[0][0] !== '@');
-    const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const q = (v) => { let t = String(v ?? ''); if (/^[=@\t\r]|^[+-](?![\d. (])/.test(t)) t = "'" + t; return `"${t.replace(/"/g, '""')}"`; };
     const det = (o) => (o.payments || []).map((x) => `${x.date || '?'} ${money(x.amount)} ${x.method || ''} ${x.note || ''}`.trim()).join('; ');
     const csv = [[...cols.map((c) => q(c[1])), q('Payment details')].join(','), ...list.map((o) => [...cols.map((c) => q(o[c[0]])), q(det(o))].join(','))].join('\r\n');
     const a = document.createElement('a');
@@ -665,6 +700,7 @@
   }
 
   function openEdit(id, prefill) {
+    const hadSplit = !!(id && byId(id).contact && !byId(id).phone && !byId(id).email && !byId(id).social);
     const o = splitContact(id ? { ...byId(id) } : { status: 'Requested', requested: todayISO(), ...(prefill || {}) });
     const types = [...new Set(S.vault.orders.map((x) => x.type).filter(Boolean))].sort();
     const dlg = $('#dlg');
@@ -817,7 +853,11 @@
       const t = e.target.closest('[data-pid]');
       if (t) { const ids = photos().filter((x) => x.orderId === id).map((x) => x.id); openViewer(ids, ids.indexOf(t.dataset.pid), drawOrderPhotos); }
     });
-    $('#b-cancel').onclick = () => dlg.close();
+    let snap = null;
+    const askClose = () => { if (snap === null || JSON.stringify(read()) === snap || confirm('Discard your changes to this order?')) dlg.close(); };
+    $('#b-cancel').onclick = askClose;
+    dlg.oncancel = (e) => { e.preventDefault(); askClose(); };
+    dlg.addEventListener('close', () => { dlg.oncancel = null; }, { once: true });
     if (id) $('#b-del').onclick = () => {
       const idx = S.vault.orders.findIndex((x) => x.id === id), removed = S.vault.orders[idx];
       const linked = photos().filter((ph) => ph.orderId === id);
@@ -831,7 +871,7 @@
       const data = read();
       for (const [f, fn] of Object.entries(TEXT_FIELDS)) if (typeof data[f] === 'string') data[f] = fn(data[f]);
       let ord;
-      if (id) { ord = byId(id); Object.assign(ord, data); }
+      if (id) { ord = byId(id); Object.assign(ord, data); if (hadSplit) ord.contact = ''; }
       else { ord = { id: crypto.randomUUID().slice(0, 8), ...data }; S.vault.orders.push(ord); }
       if (payTouched || !id) applyPays(ord);
       dlg.close(); touch(); render();
@@ -841,6 +881,7 @@
         touch(); render(); toast(`Contact info added to ${plural(others.length, 'order')}.`);
       } });
     });
+    snap = JSON.stringify(read());
     dlg.showModal();
   }
 
@@ -1568,7 +1609,7 @@
         <div class="err" id="pw-msg"></div></div>
       <div class="panel help" style="margin-top:16px"><h3>Import your Excel workbook</h3>
         <p class="muted small">${plural(S.vault.orders.length, 'order')} ${S.vault.orders.length === 1 ? 'is' : 'are'} in the portal now. Importing reads your .xlsx in this browser (it is not uploaded) and <b>replaces</b> the orders and reference sheets.</p>
-        <div class="bar"><input id="imp-file" type="file" accept=".xlsx,.xls"><button class="btn small" id="imp-go">Import</button></div>
+        <div class="bar"><input id="imp-file" type="file" accept=".xlsx,.xls" aria-label="Excel workbook to import"><button class="btn small" id="imp-go">Import</button></div>
         <div class="err" id="imp-msg" role="status"></div></div>
       <div class="panel help" style="margin-top:16px"><h3>Appearance</h3>
         <div class="seg" role="group" aria-label="Theme">${[['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button data-theme-set="${v}" aria-pressed="${themePref() === v}">${l}</button>`).join('')}</div>
@@ -1637,8 +1678,13 @@
       $('#tok-msg').textContent = 'Checking…';
       try {
         const g = await ghGet();
-        if (g) { S.sha = g.sha; if (!S.dirty && !S.vault) S.vault = JSON.parse(g.text); } else S.sha = undefined;
-        S.dirty = true; await save(); render();
+        if (!g) { S.sha = undefined; S.dirty = true; await save(); }
+        else if (normEnv(g.text) === S.loaded) { S.sha = g.sha; if (S.dirty) await save(); else setSave('saved'); }
+        else if (!S.dirty) {
+          try { await adoptRemote(g); setSave('saved'); toast('Token saved. Loaded the latest data from your other devices.'); }
+          catch (e2) { toast(e2.rekeyed ? 'Token saved. Your login was changed on another device. Lock and log in again with the new username and password.' : 'Token saved, but the latest data could not be read.', { kind: 'bad', ms: 9000 }); }
+        } else { S.sha = null; setSave('conflict'); toast('Token saved. Another device has newer changes than this one, so nothing was overwritten. Tap “Changed elsewhere” to load them.', { kind: 'bad', ms: 10000 }); }
+        render();
       } catch { $('#tok-msg').textContent = 'That token did not work. Check it has Contents read/write on momscookies.'; }
       return;
     }
