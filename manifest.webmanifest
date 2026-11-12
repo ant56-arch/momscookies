@@ -1,0 +1,20 @@
+{
+  "name": "Gina's Cookie Jar",
+  "short_name": "Cookie Jar",
+  "description": "Owner portal for orders, payments, photos and the calendar.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#fbf3e6",
+  "theme_color": "#4a2a18",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Orders", "url": "./#orders" },
+    { "name": "Calendar", "url": "./#calendar" }
+  ]
+}

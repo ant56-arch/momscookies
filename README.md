@@ -18,6 +18,8 @@ Token: GitHub → Settings → Developer settings → Fine-grained tokens → on
 
 **Photos:** resized in your browser, encrypted with the same key, and saved as `data/photos/*.bin` through the GitHub API (so a token is needed to upload). Photo details (caption, occasion, linked order) live in the encrypted portal data. Deleting a photo removes its files.
 
+**App features:** installable (`manifest.webmanifest`, `icons/`), offline fallback via `sw.js` (network first, cache only when offline), Auto/Light/Dark theme, toasts with Undo, Back-button navigation (`#orders`, `#calendar`, ...), keyboard shortcuts (`/` search, `N` new order).
+
 Forgot the password = the data cannot be recovered (use Settings → Download encrypted backup regularly, and keep the original workbook).
 
 `vendor/xlsx.full.min.js` is SheetJS (Apache-2.0), used for the one-time Excel import.

@@ -53,6 +53,37 @@
     }
     return out;
   }
+  // ---------- theme (Auto / Light / Dark) ----------
+  const themePref = () => { try { return localStorage.getItem('gcj_theme') || 'auto'; } catch { return 'auto'; } };
+  const darkMq = window.matchMedia('(prefers-color-scheme: dark)');
+  function applyTheme() {
+    const p = themePref(), t = p === 'auto' ? (darkMq.matches ? 'dark' : 'light') : p;
+    document.documentElement.dataset.theme = t;
+    const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = t === 'dark' ? '#130c08' : '#4a2a18';
+  }
+  darkMq.addEventListener('change', applyTheme);
+  applyTheme();
+
+  // ---------- toasts (small messages, optional Undo) ----------
+  function toast(msg, { action, onAction, kind = '', ms = 5000 } = {}) {
+    let box = $('#toasts');
+    if (!box) {
+      box = document.createElement('div'); box.id = 'toasts'; box.setAttribute('role', 'status'); box.setAttribute('aria-live', 'polite');
+      if ('popover' in box) box.popover = 'manual';
+      document.body.appendChild(box);
+    }
+    if (box.showPopover) { try { box.hidePopover(); } catch { /* not open */ } try { box.showPopover(); } catch { /* ignore */ } } // re-open so it sits above any dialog
+    const el = document.createElement('div');
+    el.className = 'toast ' + kind;
+    el.innerHTML = `<span>${esc(msg)}</span>${action ? `<button type="button">${esc(action)}</button>` : ''}`;
+    const close = () => { el.classList.add('out'); setTimeout(() => el.remove(), 220); };
+    if (action) el.querySelector('button').onclick = () => { if (onAction) onAction(); close(); };
+    box.appendChild(el);
+    setTimeout(close, action ? 8000 : ms);
+  }
+  const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const withTransition = (fn) => (document.startViewTransition && !reducedMotion() ? document.startViewTransition(fn) : fn());
+
   const b64e = (u8) => { let s = ''; u8.forEach((b) => (s += String.fromCharCode(b))); return btoa(s); };
   const b64d = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
@@ -202,7 +233,9 @@
   const photoCount = (orderId) => photos().filter((p) => p.orderId === orderId).length;
   const photoById = (id) => photos().find((p) => p.id === id);
 
-  let saving = false, again = false, timer = null;
+  let saving = false, again = false, timer = null, retryTimer = null;
+  window.addEventListener('online', () => { if (S.vault && S.dirty) save(); else if (S.vault) setSave(tok() ? 'saved' : 'local'); });
+  window.addEventListener('offline', () => { if (S.vault) setSave('offline'); });
   function setSave(state) {
     const el = $('#savestate'); if (!el) return;
     const m = {
@@ -210,6 +243,7 @@
       local: ['⚠ Not saved', 'bad'],
       conflict: ['⚠ Changed elsewhere', 'bad'],
       auth: ['⚠ Token rejected', 'bad'], error: ['⚠ Save failed', 'bad'],
+      offline: ['Offline · will save when you reconnect', 'warn'],
     }[state] || ['', ''];
     el.textContent = m[0]; el.className = 'savestate ' + m[1]; el.title = m[1] ? 'Tap to fix' : '';
   }
@@ -221,6 +255,7 @@
   }
   async function save() {
     if (!tok()) { setSave('local'); return; }
+    if (!navigator.onLine) { setSave('offline'); return; }
     if (saving) { again = true; return; }
     saving = true; setSave('saving');
     try {
@@ -229,7 +264,8 @@
       S.sha = await withLock(() => ghPut(text, S.sha));
       S.dirty = false; setSave('saved');
     } catch (e) {
-      setSave(e.conflict ? 'conflict' : e.auth ? 'auth' : 'error');
+      setSave(e.conflict ? 'conflict' : e.auth ? 'auth' : navigator.onLine ? 'error' : 'offline');
+      if (!e.conflict && !e.auth) { clearTimeout(retryTimer); retryTimer = setTimeout(() => { if (S.dirty) save(); }, 20000); } // try again shortly
     } finally {
       saving = false;
       if (again) { again = false; save(); }
@@ -374,6 +410,7 @@
 
   function enterApp(state) {
     $('#gate').hidden = true; $('#app').hidden = false; window.scrollTo(0, 0);
+    const want = location.hash.slice(1); if (['home', 'orders', 'calendar', 'photos', 'money', 'calculator', 'workbook', 'settings', 'more'].includes(want)) S.tab = want;
     setSave(state);
     loadSite().then(render);
     render();
@@ -428,6 +465,12 @@
       ${S.filter === 'Orders' ? `<p class="muted small">${count('Declined')} cancelled / no-order inquiries are hidden — see the Declined filter.</p>` : ''}`}`;
     drawOrders();
   }
+  function setStatus(o, st) {
+    const prev = o.status;
+    if (!o || prev === st) return;
+    o.status = st; touch(); render();
+    toast(`${o.name} moved to ${st}`, { action: 'Undo', onAction: () => { o.status = prev; touch(); render(); } });
+  }
   const drawOrders = () => (S.oview === 'board' ? drawBoard() : drawList());
 
   const BOARD_COLS = ['Requested', 'Confirmed', 'Baking', 'Ready', 'Completed'];
@@ -463,7 +506,7 @@
       const c = e.target.closest('.bcol'); if (!c) return;
       e.preventDefault();
       const o = byId(e.dataTransfer.getData('text/plain'));
-      if (o && o.status !== c.dataset.col) { o.status = c.dataset.col; touch(); render(); } else el.ondragend();
+      if (o && o.status !== c.dataset.col) setStatus(o, c.dataset.col); else el.ondragend();
     };
   }
 
@@ -730,10 +773,11 @@
     });
     $('#b-cancel').onclick = () => dlg.close();
     if (id) $('#b-del').onclick = () => {
-      if (!confirm(`Delete the order for ${o.name}? This can't be undone.`)) return;
-      S.vault.orders = S.vault.orders.filter((x) => x.id !== id);
-      photos().forEach((ph) => { if (ph.orderId === id) ph.orderId = null; });
+      const idx = S.vault.orders.findIndex((x) => x.id === id), removed = S.vault.orders[idx];
+      const linked = photos().filter((ph) => ph.orderId === id);
+      S.vault.orders.splice(idx, 1); linked.forEach((ph) => (ph.orderId = null));
       dlg.close(); touch(); render();
+      toast(`Deleted the order for ${removed.name}`, { action: 'Undo', onAction: () => { S.vault.orders.splice(idx, 0, removed); linked.forEach((ph) => (ph.orderId = id)); touch(); render(); } });
     };
     ef.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -927,12 +971,12 @@
   const kindOptions = (sel) => PHOTO_KINDS.map(([v, l]) => `<option value="${v}"${v === sel ? ' selected' : ''}>${l}</option>`).join('');
 
   function startUpload(files, preset, onDone) {
-    if (!tok()) { alert('Photos are saved to your GitHub repository, so add your GitHub token in Settings first.'); return; }
-    if (!files.length) { alert('Those files are not pictures. Please drop image files such as JPG or PNG.'); return; }
+    if (!tok()) { toast('Photos are saved to GitHub. Add your GitHub token in Settings first.', { kind: 'bad' }); return; }
+    if (!files.length) { toast('Those files are not pictures. Please drop image files such as JPG or PNG.', { kind: 'bad' }); return; }
     openUpload(files, preset, onDone);
   }
   function pickPhotos(preset = {}, onDone) {
-    if (!tok()) { alert('Photos are saved to your GitHub repository, so add your GitHub token in Settings first.'); return; }
+    if (!tok()) { toast('Photos are saved to GitHub. Add your GitHub token in Settings first.', { kind: 'bad' }); return; }
     const inp = document.createElement('input');
     inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true; inp.hidden = true;
     inp.onchange = () => { const files = [...inp.files].filter((f) => f.type.startsWith('image/')); inp.remove(); if (files.length) openUpload(files, preset, onDone); };
@@ -1475,6 +1519,15 @@
         <p class="muted small">${plural(S.vault.orders.length, 'order')} ${S.vault.orders.length === 1 ? 'is' : 'are'} in the portal now. Importing reads your .xlsx in this browser (it is not uploaded) and <b>replaces</b> the orders and reference sheets.</p>
         <div class="bar"><input id="imp-file" type="file" accept=".xlsx,.xls"><button class="btn small" id="imp-go">Import</button></div>
         <div class="err" id="imp-msg" role="status"></div></div>
+      <div class="panel help" style="margin-top:16px"><h3>Appearance</h3>
+        <div class="seg" role="group" aria-label="Theme">${[['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button data-theme-set="${v}" aria-pressed="${themePref() === v}">${l}</button>`).join('')}</div>
+        <p class="muted small">Auto follows your phone or computer setting.</p></div>
+      <div class="panel help" style="margin-top:16px"><h3>Install as an app</h3>
+        ${window.matchMedia('(display-mode: standalone)').matches || navigator.standalone ? '<p class="ok">✓ You are using the installed app.</p>'
+          : deferredInstall ? '<button class="btn small" id="install-app">Install app</button>'
+          : '<p class="muted small" style="margin:0">Put the portal on your home screen so it opens like an app. On an iPhone or iPad, tap <b>Share</b>, then <b>Add to Home Screen</b>. On Android or a computer, open your browser menu and choose <b>Install app</b> or <b>Add to Home screen</b>.</p>'}</div>
+      <div class="panel help" style="margin-top:16px"><h3>Keyboard shortcuts</h3>
+        <p class="muted small" style="margin:0"><kbd>/</kbd> search · <kbd>N</kbd> new order · <kbd>Esc</kbd> close a window · <kbd>←</kbd> <kbd>→</kbd> move between photos</p></div>
       <div class="panel help" style="margin-top:16px"><h3>Tidy up text</h3>
         <p class="muted small">Fixes capitalization and extra spaces in names, event names, colors and notes. For example, “baby shower/reveal” becomes “Baby Shower/Reveal”. You can review every change first.</p>
         ${tidyChanges().length ? `<button class="btn ghost small" data-tidytext>Review ${plural(tidyChanges().length, 'change')}</button>` : '<p class="ok">✓ Everything looks tidy.</p>'}</div>
@@ -1487,7 +1540,7 @@
   document.addEventListener('click', async (e) => {
     const t = e.target;
     const tabBtn = t.closest('[data-tab]');
-    if (tabBtn) { S.tab = tabBtn.dataset.tab; render(); window.scrollTo(0, 0); return; }
+    if (tabBtn) { if (tabBtn.tagName === 'A') e.preventDefault(); goTab(tabBtn.dataset.tab); return; }
     if (t.closest('#savestate.bad')) {
       if (t.textContent.includes('Changed elsewhere')) { if (confirm('Reload to get the latest data? Unsaved changes on this device will be lost.')) { S.dirty = false; location.reload(); } }
       else { S.tab = 'settings'; render(); window.scrollTo(0, 0); }
@@ -1496,6 +1549,9 @@
     if (t.id === 'lock' || t.closest('#lock-more')) { if (S.dirty && !confirm('You have unsaved changes. Lock anyway?')) return; S.dirty = false; location.reload(); return; }
     if (t.closest('[data-new]')) { openEdit(null); return; }
     if (t.closest('[data-tag]')) { openTagger(); return; }
+    const th = t.closest('[data-theme-set]');
+    if (th) { try { localStorage.setItem('gcj_theme', th.dataset.themeSet); } catch { /* ignore */ } applyTheme(); render(); return; }
+    if (t.id === 'install-app' && deferredInstall) { deferredInstall.prompt(); deferredInstall = null; render(); return; }
     const ov = t.closest('[data-oview]');
     if (ov) { S.oview = ov.dataset.oview; try { localStorage.setItem('gcj_oview', S.oview); } catch { /* ignore */ } render(); return; }
     const cd = t.closest('[data-calday]');
@@ -1565,7 +1621,7 @@
   });
   document.addEventListener('change', (e) => {
     const t = e.target;
-    if (t.dataset.sid) { byId(t.dataset.sid).status = t.value; touch(); render(); }
+    if (t.dataset.sid) setStatus(byId(t.dataset.sid), t.value);
     if (t.id === 'oyear') { S.oyear = t.value; render(); }
     if (t.id === 'osort') { S.sort = t.value; render(); }
     if (t.id === 'year') { S.year = t.value; render(); }
@@ -1580,6 +1636,24 @@
     if (e.target.id === 'q') { S.q = e.target.value; drawOrders(); }
     if (e.target.id === 'pq') { S.pq = e.target.value; drawPhotoGrid(); }
   });
+
+  const TABS = ['home', 'orders', 'calendar', 'photos', 'money', 'calculator', 'workbook', 'settings', 'more'];
+  function goTab(tab, push = true) {
+    if (!TABS.includes(tab)) return;
+    S.tab = tab;
+    if (push && location.hash.slice(1) !== tab) history.pushState(null, '', '#' + tab);
+    withTransition(() => { render(); window.scrollTo(0, 0); });
+  }
+  window.addEventListener('popstate', () => { if (S.vault) goTab(location.hash.slice(1) || 'home', false); });
+  let deferredInstall = null;
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredInstall = e; if (S.vault && S.tab === 'settings') render(); });
+  document.addEventListener('keydown', (e) => {
+    if (!S.vault || e.metaKey || e.ctrlKey || e.altKey || document.querySelector('dialog[open]')) return;
+    if (e.target.closest && e.target.closest('input, textarea, select')) return;
+    if (e.key === '/') { e.preventDefault(); if (S.tab !== 'orders' && S.tab !== 'photos') { S.tab = 'orders'; render(); } const q = $('#q') || $('#pq'); if (q) q.focus(); }
+    else if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openEdit(null); }
+  });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { /* offline support is optional */ });
 
   showGate();
 })();
