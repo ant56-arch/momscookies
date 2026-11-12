@@ -40,8 +40,26 @@
   const fixEvent = (v) => { v = tidySpace(v).replace(/[,;]+$/, ''); return allLower(v) ? titleCase(v) : upFirst(v); };
   const fixSentence = (v) => upFirst(tidySpace(v).replace(/\s+([,.;:!?])/g, '$1').replace(/[,;]+$/, ''));
   const fixReason = (v) => fixSentence(v).replace(/^Didnt\b/i, "Didn't");
-  const TEXT_FIELDS = { name: fixName, event: fixEvent, colors: fixSentence, allergies: fixSentence, addOns: fixSentence, notes: fixSentence, reason: fixReason, contact: tidySpace };
-  const TEXT_LABELS = { name: 'Name', event: 'Event', colors: 'Colors', allergies: 'Allergies', addOns: 'Add-ons', notes: 'Notes', reason: 'Reason', contact: 'Contact' };
+  const fixPhone = (v) => {
+    v = tidySpace(v); const d = v.replace(/\D/g, '');
+    const t = d.length === 11 && d[0] === '1' ? d.slice(1) : d;
+    return t.length === 10 && !/[a-z]/i.test(v) ? `(${t.slice(0, 3)}) ${t.slice(3, 6)}-${t.slice(6)}` : v;
+  };
+  const fixEmail = (v) => tidySpace(v).toLowerCase();
+  const telHref = (v) => 'tel:' + String(v).replace(/[^\d+]/g, '');
+  const smsHref = (v) => 'sms:' + String(v).replace(/[^\d+]/g, '');
+  // Older orders kept everything in one "contact" box: split it into phone / email / social.
+  function splitContact(o) {
+    const c = (o.contact || '').trim();
+    if (!c || o.phone || o.email || o.social) return o;
+    if (/@\S+\.\S+/.test(c)) o.email = c.match(/\S+@\S+\.\S+/)[0];
+    else if (c.replace(/\D/g, '').length >= 7) o.phone = c;
+    else o.social = c;
+    o.contact = '';
+    return o;
+  }
+  const TEXT_FIELDS = { phone: fixPhone, email: fixEmail, social: tidySpace, name: fixName, event: fixEvent, colors: fixSentence, allergies: fixSentence, addOns: fixSentence, notes: fixSentence, reason: fixReason, contact: tidySpace };
+  const TEXT_LABELS = { name: 'Name', event: 'Event', colors: 'Colors', allergies: 'Allergies', addOns: 'Add-ons', notes: 'Notes', reason: 'Reason', contact: 'Contact', phone: 'Phone', email: 'Email', social: 'Facebook or Instagram' };
   function tidyOrder(o) { for (const [f, fn] of Object.entries(TEXT_FIELDS)) if (typeof o[f] === 'string' && o[f]) o[f] = fn(o[f]); return o; }
   function tidyChanges() {
     const out = [];
@@ -453,7 +471,7 @@
         <div class="kpi"><b class="${owed.length ? 'neg' : ''}">${money(owed.reduce((s, o) => s + balance(o), 0))}</b><span>Owed to you (${owed.length})</span></div>
         <div class="kpi"><b style="font-size:1.05rem">${next ? esc(fmtDate(next.due)) : '—'}</b><span>${next ? 'Next: ' + esc(short(next.name)) : 'No upcoming pickups'}</span></div>
       </div>
-      <div class="bar"><input class="grow" id="q" type="search" placeholder="Search name, event, notes, payment…" value="${esc(S.q)}">${board ? yearSel : ''}</div>
+      <div class="bar"><input class="grow" id="q" type="search" placeholder="Search name, phone, event, notes…" value="${esc(S.q)}">${board ? yearSel : ''}</div>
       ${board ? `<p class="muted small drop-tip">Drag a card to another column to change its status.</p><div id="board" class="board"></div>` : `<div class="bar">
         ${chip('Orders', 'Orders', orders.length - count('Declined'))}${chip('Active', 'Active', active.length)}${chip('Owes', 'Owes money', owed.length)}${chip('Completed', 'Completed', count('Completed'))}${chip('Declined', 'Declined', count('Declined'))}${chip('NoOcc', 'No occasion', orders.filter(noOcc).length)}
         <span class="sp"></span>
@@ -479,12 +497,12 @@
     const el = $('#board'); if (!el) return;
     const q = S.q.toLowerCase(), y = S.oyear, today = todayISO();
     const match = (o) => (y === 'All' || (o.due || o.requested || '').startsWith(y))
-      && (!q || [o.name, o.event, o.type, o.notes, o.colors].join(' ').toLowerCase().includes(q));
+      && (!q || [o.name, o.event, o.type, o.notes, o.colors, o.phone, o.email, o.social, o.contact].join(' ').toLowerCase().includes(q));
     const card = (o) => {
       const bal = balance(o), over = OPEN.includes(o.status) && o.due && o.due < today, pc = photoCount(o.id);
       return `<article class="bcard st-${o.status}" draggable="true" data-id="${o.id}">
         <div class="bc-top"><b>${esc(o.name)}</b>${num(o.rush) > 0 ? '<span class="pill rush">⚡ Rush</span>' : ''}</div>
-        <div class="bc-sub">${esc(o.event || o.type || '')}</div>
+        <div class="bc-sub">${esc(o.event || o.type || '')}</div>${o.phone ? `<a class="bc-contact" href="${esc(telHref(o.phone))}">${ico('phone')}${esc(o.phone)}</a>` : o.email ? `<a class="bc-contact" href="mailto:${esc(o.email)}">${ico('mail')}${esc(o.email)}</a>` : ''}
         <div class="bc-meta"><span class="${over ? 'neg' : ''}">${o.due ? esc(fmtDate(o.due)) + (OPEN.includes(o.status) ? esc(relDue(o.due, today)) : '') : 'No date'}</span><span>${cookiesOf(o.qty)}</span></div>
         <div class="bc-foot"><span>${o.amtDue == null ? '' : money(o.amtDue)}</span>${o.amtDue == null ? '' : bal > 0.005 ? `<span class="neg">${money(bal)} due</span>` : '<span class="ok">✓ Paid</span>'}${pc ? `<span>📷 ${pc}</span>` : ''}</div>
         <select class="bc-move" data-sid="${o.id}" aria-label="Move to">${STATUSES.map((st) => `<option${st === o.status ? ' selected' : ''}>${st}</option>`).join('')}</select></article>`;
@@ -521,7 +539,7 @@
       if (f === 'Declined' && o.status !== 'Declined') return false;
       if (f === 'NoOcc' && !noOcc(o)) return false;
       if (y !== 'All' && !(o.due || o.requested || '').startsWith(y)) return false;
-      if (q && ![o.name, o.event, o.type, o.notes, o.contact, o.reason, o.method, o.colors].join(' ').toLowerCase().includes(q)) return false;
+      if (q && ![o.name, o.event, o.type, o.notes, o.contact, o.phone, o.email, o.social, o.reason, o.method, o.colors].join(' ').toLowerCase().includes(q)) return false;
       return true;
     });
   }
@@ -539,7 +557,7 @@
     return `<div class="orow st-${o.status}" data-id="${o.id}">
       <span class="c-due">${esc(fmtDate(o.due)) || '<span class="muted">No date</span>'}</span>
       <span class="c-name"><b>${esc(o.name)}</b>${photoCount(o.id) ? ` <span class="pill" title="Photos">📷 ${photoCount(o.id)}</span>` : ''}${num(o.rush) > 0 ? ' <span class="pill rush">⚡ Rush</span>' : ''}${o.allergies ? ` <span class="pill warn" title="${esc(o.allergies)}">⚠ ${esc(o.allergies)}</span>` : ''}
-        <small>${esc(dec ? o.reason : (o.event || o.type))}</small></span>
+        <small>${esc(dec ? o.reason : (o.event || o.type))}${!dec && (o.phone || o.email) ? `${o.event || o.type ? ' · ' : ''}<a href="${esc(o.phone ? telHref(o.phone) : 'mailto:' + o.email)}">${esc(o.phone || o.email)}</a>` : ''}</small></span>
       <span class="c-qty">${dec || o.qty == null ? '' : o.qty}</span>
       <span class="c-total">${dec || o.amtDue == null ? '' : money(o.amtDue)}</span>
       <span class="c-paid">${dec || o.paid == null ? '' : money(o.paid)}${(o.payments || []).length > 1 ? `<small>${o.payments.length} payments</small>` : ''}</span>
@@ -608,7 +626,11 @@
   const METHODS = ['', 'Cash', 'Venmo', 'Zelle', 'Check', 'Gift', 'Other'];
   const FIELDS = [
     ['#', 'Customer & status'],
-    ['name', 'Customer', 'text', { req: 1 }], ['contact', 'Phone or email', 'text'],
+    ['name', 'Customer', 'text', { req: 1, list: 'customers' }], ['phone', 'Phone', 'tel'],
+    ['email', 'Email', 'email'], ['social', 'Facebook or Instagram', 'text'],
+    ['prefer', 'Best way to reach them', 'select', { opts: ['', 'Text', 'Call', 'Email', 'Facebook', 'Instagram'] }],
+    ['@contact', '', 'contact'],
+    ['contact', 'Other contact', 'text', { hide: 1 }],
     ['status', 'Status', 'select', { opts: STATUSES }], ['reason', 'Reason (if declined)', 'text'],
     ['#', 'Event & dates'],
     ['event', 'Event name / details', 'text'], ['type', 'Occasion', 'select', { opts: ['', ...OCCASIONS.map((x) => x[0])], hint: (o) => { const g = occasionOf(o); return !(o.type || '').trim() && g.source === 'guessed' ? `<small class="muted">Suggestion: ${esc(g.name)}</small>` : ''; } }],
@@ -643,12 +665,13 @@
   }
 
   function openEdit(id, prefill) {
-    const o = id ? { ...byId(id) } : { status: 'Requested', requested: todayISO(), ...(prefill || {}) };
+    const o = splitContact(id ? { ...byId(id) } : { status: 'Requested', requested: todayISO(), ...(prefill || {}) });
     const types = [...new Set(S.vault.orders.map((x) => x.type).filter(Boolean))].sort();
     const dlg = $('#dlg');
     const fld = ([k, label, type, x = {}]) => {
       if (k === '#') return `<h3 class="fh">${label}</h3>`;
       if (x.hide) return '';
+      if (k === '@contact') return '<div class="cacts wide" id="cacts"></div>';
       if (k === '@photos') return '<div class="ophotos wide" id="ophotos"></div>';
       if (k === '@pay') return '<div class="paybox wide" id="paybox"><div class="paysum" id="paysum"></div><div class="paylist" id="paylist"></div><div class="payact" id="payact"></div><div class="muted small" id="pay-msg" role="status"></div></div>';
       const v = o[k] ?? '';
@@ -667,6 +690,7 @@
       <h2>${id ? 'Edit order' : 'New order'}</h2>
       <div class="fgrid">${FIELDS.map(fld).join('')}</div>
       <datalist id="dl-types">${types.map((t) => `<option>${esc(t)}</option>`).join('')}</datalist>
+      <datalist id="dl-customers">${[...new Set(S.vault.orders.map((x) => x.name).filter(Boolean))].sort().map((n) => `<option>${esc(n)}</option>`).join('')}</datalist>
       <datalist id="dl-methods"><option>Cash</option><option>Venmo</option><option>Zelle</option><option>Check</option></datalist>
       <div class="actions">
         <button type="button" class="btn ghost small" id="b-calc">Calculate total</button>
@@ -700,6 +724,27 @@
       ef.elements.rush.value = Math.ceil(num(ef.elements.qty.value) / 12) * (p.rushPerDozen ?? 5);
       showCalc();
     };
+    // ----- contact: quick actions + fill from this customer's earlier orders -----
+    const drawContact = () => {
+      const ph = ef.elements.phone.value.trim(), em = ef.elements.email.value.trim();
+      $('#cacts').innerHTML = ph || em ? `${ph ? `<a class="btn ghost small" href="${esc(telHref(ph))}">${ico('phone')} Call</a><a class="btn ghost small" href="${esc(smsHref(ph))}">${ico('chat')} Text</a>` : ''}${em ? `<a class="btn ghost small" href="mailto:${esc(em)}">${ico('mail')} Email</a>` : ''}<span class="muted small" id="cfill"></span>`
+        : '<span class="muted small" id="cfill">Add a phone number or email to call, text or email from here.</span>';
+    };
+    const sameCustomer = (name) => S.vault.orders.filter((x) => x.id !== id && x.name && x.name.trim().toLowerCase() === name.trim().toLowerCase());
+    const fillFromPast = () => {
+      const name = ef.elements.name.value;
+      if (!name.trim() || ef.elements.phone.value || ef.elements.email.value || ef.elements.social.value) return;
+      const past = sameCustomer(name).map((x) => splitContact({ ...x })).filter((x) => x.phone || x.email || x.social).sort(newestFirst)[0];
+      if (!past) return;
+      ['phone', 'email', 'social', 'prefer'].forEach((f) => { if (past[f]) ef.elements[f].value = past[f]; });
+      drawContact();
+      $('#cfill').textContent = `Filled in from ${past.name}'s order on ${fmtDate(past.due || past.requested) || 'an earlier date'}.`;
+    };
+    drawContact();
+    if (!id) fillFromPast();
+    ef.elements.name.addEventListener('change', fillFromPast);
+    ef.addEventListener('input', (e) => { if (e.target.name === 'phone' || e.target.name === 'email') drawContact(); });
+
     // ----- payments ledger (split payments) -----
     const r2 = (n) => Math.round(n * 100) / 100;
     let pays = (o.payments || []).map((x) => ({ ...x }));
@@ -790,6 +835,11 @@
       else { ord = { id: crypto.randomUUID().slice(0, 8), ...data }; S.vault.orders.push(ord); }
       if (payTouched || !id) applyPays(ord);
       dlg.close(); touch(); render();
+      const others = (ord.phone || ord.email || ord.social) ? S.vault.orders.filter((x) => x !== ord && x.name && x.name.trim().toLowerCase() === ord.name.trim().toLowerCase() && !x.phone && !x.email && !x.social) : [];
+      if (others.length) toast(`Add this contact info to ${plural(others.length, 'other order')} for ${ord.name}?`, { action: 'Add', onAction: () => {
+        others.forEach((x) => { splitContact(x); ['phone', 'email', 'social', 'prefer'].forEach((f) => { if (ord[f] && !x[f]) x[f] = ord[f]; }); });
+        touch(); render(); toast(`Contact info added to ${plural(others.length, 'order')}.`);
+      } });
     });
     dlg.showModal();
   }
@@ -817,7 +867,7 @@
     const monShort = (iso) => new Date(iso + 'T00:00').toLocaleDateString(undefined, { month: 'short' });
     const cuRow = (o) => `<div class="cu st-${o.status}" data-id="${o.id}"><span class="datebadge"><small>${monShort(o.due)}</small><b>${+o.due.slice(8, 10)}</b></span>
       <span class="cu-main"><b>${esc(o.name)}</b><small>${esc(o.event || o.type || '')}${o.event || o.type ? ' · ' : ''}${cookiesOf(o.qty)}${esc(relDue(o.due, today))}</small></span>
-      <span class="cu-end"><span class="pill st-${o.status}">${o.status}</span>${balance(o) > 0.005 && o.amtDue != null ? `<span class="neg small">${money(balance(o))} due</span>` : ''}</span></div>`;
+      <span class="cu-end">${o.phone ? `<a class="cu-call" href="${esc(telHref(o.phone))}" aria-label="Call ${esc(o.name)}" title="Call ${esc(o.phone)}">${ico('phone')}</a>` : ''}<span class="pill st-${o.status}">${o.status}</span>${balance(o) > 0.005 && o.amtDue != null ? `<span class="neg small">${money(balance(o))} due</span>` : ''}</span></div>`;
     const strip = Array.from({ length: 7 }, (_, i) => {
       const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i), iso = isoDate(d), n = upcoming.filter((o) => o.due === iso).length;
       return `<button class="dchip${n ? ' has' : ''}${i === 0 ? ' today' : ''}" data-calday="${iso}"><span class="dw">${i === 0 ? 'Today' : d.toLocaleDateString(undefined, { weekday: 'short' })}</span><span class="dn">${d.getDate()}</span><span class="dc">${n ? plural(n, 'order') : '—'}</span></button>`;
@@ -1580,7 +1630,7 @@
     if (ref) { S.refSheet = ref.dataset.ref; render(); return; }
     const row = t.closest('[data-id]');
     if (!row) { const dc = t.closest('[data-day]'); if (dc) { S.calDay = dc.dataset.day; render(); return; } }
-    if (row && !t.closest('select') && !t.closest('#dlg')) { openEdit(row.dataset.id); return; }
+    if (row && !t.closest('select') && !t.closest('a') && !t.closest('#dlg')) { openEdit(row.dataset.id); return; }
     if (t.id === 'tok-save') {
       const v = $('#tok').value.trim(); if (!v) return;
       try { localStorage.setItem('gcj_token', v); } catch { /* ignore */ }

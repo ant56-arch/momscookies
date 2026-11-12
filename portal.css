@@ -795,3 +795,27 @@ dialog, #dlg2 { border-radius: 18px; box-shadow: var(--shadow-lg); border: 1px s
   .kic .ic { width: 17px; height: 17px; }
   .hero-card { padding: 20px; } .hero-card h2 { font-size: 1.8rem; }
 }
+
+/* ----- customer contact ----- */
+.cacts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: -2px; }
+.cacts .btn .ic, .bc-contact .ic, .cu-call .ic { width: 16px; height: 16px; }
+.c-name small a, .bc-contact { color: var(--accent-dark); text-decoration: none; font-weight: 600; }
+.c-name small a:hover, .bc-contact:hover { text-decoration: underline; }
+.bc-contact { display: inline-flex; align-items: center; gap: 6px; font-size: .85rem; }
+.cu-end { grid-auto-flow: row; }
+.cu-call { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--accent-dark); margin-bottom: 2px; }
+.cu-call:hover { background: var(--alt); }
+
+/* ----- narrow containers (tablets, small laptops with the sidebar): compact rows ----- */
+.olist, .occ { container-type: inline-size; }
+@container (max-width: 780px) {
+  .ohead { display: none; }
+  .orow { grid-template-columns: 1fr auto auto auto; grid-template-areas: "name name name st" "due qty total bal"; padding: 13px 14px; }
+  .c-name { grid-area: name; } .c-st { grid-area: st; } .c-due { grid-area: due; color: var(--muted); font-size: .85rem; }
+  .c-qty { grid-area: qty; } .c-total { grid-area: total; } .c-bal { grid-area: bal; } .c-paid { display: none; }
+  .c-qty, .c-total, .c-bal { font-size: .88rem; }
+  .orr { grid-template-columns: 1fr auto; grid-template-areas: "on ov" "bar bar" "oc oa"; gap: 4px 10px; padding: 12px 4px; }
+  .orr .on { grid-area: on; } .orr .ov { grid-area: ov; } .orr .obar { grid-area: bar; } .orr .op { display: none; }
+  .orr .oc { grid-area: oc; text-align: left; font-size: .85rem; } .orr .oa { grid-area: oa; font-size: .85rem; }
+  .orr.ohd { display: none; }
+}
