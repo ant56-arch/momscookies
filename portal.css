@@ -911,3 +911,19 @@ dialog, #dlg2 { border-radius: 18px; box-shadow: var(--shadow-lg); border: 1px s
 .fact span b { font: inherit; font-weight: 700; color: var(--text); }
 .hbar { grid-template-columns: 150px 1fr 50px; }
 .p-main > * { margin-inline: auto !important; }
+
+/* ----- duplicate customers ----- */
+.dupe-note { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.dupe-note .ic { width: 22px; height: 22px; color: var(--accent-dark); flex: none; }
+.dupe-note span { flex: 1; min-width: 200px; }
+.dpair { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg); }
+.dwhy { font-size: .78rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent-dark); }
+.dcards { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.dcard { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); cursor: pointer; }
+.dcard:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.dcard input { accent-color: var(--accent); width: 18px; height: 18px; flex: none; }
+.dc-body { display: grid; min-width: 0; }
+.dc-body small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#dup, #mg { max-height: 86vh; overflow-y: auto; }
+.tagger label.dcard { display: flex; align-items: center; gap: 12px; font-weight: 400; }
+.tagger label.dcard .dc-body b { font-weight: 700; }

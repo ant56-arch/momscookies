@@ -1127,6 +1127,7 @@
         <div class="kpi"><span class="kic">${ico('money')}</span><b>${money(all.length ? all.reduce((t, c) => t + c.spent, 0) / all.length : 0)}</b><span>Average spent per customer</span></div>
         <div class="kpi"><span class="kic">${ico('trend')}</span><b style="font-size:1.15rem">${top ? esc(top.name) : '—'}</b><span>${top ? 'Top customer · ' + money(top.spent) : 'Top customer'}</span></div>
       </div>
+      ${(() => { const n = dupePairs().length; return n ? `<div class="notice dupe-note">${ico('users')}<span><b>${plural(n, 'possible duplicate')}</b> found, such as the same person under two spellings. Nothing has been changed.</span><button class="btn small" data-dupes>Review</button></div>` : ''; })()}
       <div class="bar"><input class="grow" id="cq" type="search" placeholder="Search customers, phone, email…" value="${esc(S.cq || '')}"></div>
       <div class="bar">${chip('all', 'All', all.length)}${chip('repeat', 'Repeat', all.filter((c) => c.count > 1).length)}${chip('owes', 'Owes money', all.filter((c) => c.owed > 0.005).length)}${chip('nocontact', 'No contact info', all.filter((c) => !c.phone && !c.email && !c.social).length)}
         <span class="sp"></span><select id="csort" aria-label="Sort">${[['spent', 'Top spenders'], ['orders', 'Most orders'], ['recent', 'Most recent'], ['name', 'Name A–Z']].map(([v, l]) => `<option value="${v}"${(S.csort || 'spent') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
@@ -1147,6 +1148,126 @@
         <span class="cr-occ">${c.occ.length ? `${OCC_EMOJI[c.occ[0][0]] || ''} ${esc(c.occ[0][0])}` : '<span class="muted">—</span>'}</span>
         <span class="cr-owe ${c.owed > 0.005 ? 'neg' : 'muted'}">${c.owed > 0.005 ? money(c.owed) + ' due' : '✓'}</span></div>`).join('')}`
       : '<p style="padding:18px" class="muted">No customers match.</p>';
+  }
+
+  /* ---------- duplicate customers (suggested, never merged automatically) ---------- */
+  const nameNorm = (n) => String(n || '').toLowerCase().replace(/\(.*?\)/g, ' ').replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+  function lev(a, b) {
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i];
+      for (let j = 1; j <= b.length; j++) cur.push(Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] !== b[j - 1])));
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+  const pairKey = (a, b) => [a, b].sort().join('|');
+  function people() {   // every distinct name, including people whose only requests were declined
+    const map = new Map();
+    for (const o of S.vault.orders) {
+      const k = custKey(o.name); if (!k) continue;
+      let p = map.get(k);
+      if (!p) map.set(k, (p = { key: k, name: o.name, orders: [], spent: 0, last: '', phone: '', email: '' }));
+      p.orders.push(o);
+      if (o.status !== 'Declined') p.spent += num(o.paid);
+      const d = o.due || o.requested || ''; if (d > p.last) { p.last = d; p.name = o.name; }
+      const c = splitContact({ ...o }); if (!p.phone && c.phone) p.phone = c.phone; if (!p.email && c.email) p.email = c.email;
+    }
+    return [...map.values()];
+  }
+  function dupePairs() {
+    const ps = people(), skip = new Set(S.vault.notDupes || []), out = [];
+    for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
+      const A = ps[i], B = ps[j];
+      if (skip.has(pairKey(A.key, B.key))) continue;
+      const na = nameNorm(A.name), nb = nameNorm(B.name); if (!na || !nb) continue;
+      const ta = na.split(' '), tb = nb.split(' ');
+      const digits = (x) => x.replace(/\D/g, '');
+      let why = '';
+      if ((A.phone && digits(A.phone) === digits(B.phone)) || (A.email && A.email.toLowerCase() === (B.email || '').toLowerCase())) why = 'Same phone or email';
+      else if (na === nb) why = 'Same name, different spelling or punctuation';
+      else if (na.length >= 5 && nb.length >= 5 && lev(na, nb) <= 2) why = 'Names are spelled almost the same';
+      else if (ta.length >= 2 && tb.length >= 2 && ta[ta.length - 1] === tb[tb.length - 1] && (ta[0].startsWith(tb[0]) || tb[0].startsWith(ta[0])) && Math.min(ta[0].length, tb[0].length) >= 3) why = 'Same last name, similar first name';
+      else if (ta.length >= 2 && tb.length >= 2 && (ta.every((t) => tb.includes(t)) || tb.every((t) => ta.includes(t)))) why = 'One name has an extra middle or last name';
+      else if ((ta.length === 1) !== (tb.length === 1) && ta[0] === tb[0]) why = 'One is a first name only';
+      if (why) out.push({ a: A, b: B, why });
+    }
+    return out;
+  }
+  // Rename every order of the "from" people to keepName. Returns an undo function.
+  function mergeCustomers(fromKeys, keepName) {
+    const before = [];
+    S.vault.orders.forEach((o) => { if (fromKeys.includes(custKey(o.name)) && o.name !== keepName) { before.push([o, o.name]); o.name = keepName; } });
+    touch();
+    return () => { before.forEach(([o, n]) => (o.name = n)); touch(); render(); };
+  }
+  const personCard = (p, sel, radioName) => `<label class="dcard">
+      <input type="radio" name="${radioName}" value="${esc(p.name)}"${sel ? ' checked' : ''}>
+      ${avatar(p.name)}<span class="dc-body"><b>${esc(p.name)}</b>
+      <small>${(() => { const dec = p.orders.filter((o) => o.status === 'Declined').length, act = p.orders.length - dec; return [act ? plural(act, 'order') + ' · ' + money(p.spent) : '', dec ? plural(dec, 'declined inquiry', 'declined inquiries') : ''].filter(Boolean).join(' · '); })()} · last ${esc(fmtDate(p.last)) || '—'}</small>
+      ${p.phone || p.email ? `<small>${esc(p.phone || p.email)}</small>` : ''}</span></label>`;
+
+  function openDupes() {
+    const dlg = $('#dlg');
+    const draw = () => {
+      const pairs = dupePairs();
+      dlg.innerHTML = `<div class="tagger" id="dup">
+        <div class="tg-top"><h2 style="margin:0">Possible duplicates</h2><span style="flex:1"></span><button class="btn ghost small" data-x>Done</button></div>
+        ${pairs.length ? `<p class="muted" style="margin:0">These look like they could be the same person. Nothing is merged unless you press Merge. Pick the name to keep, or say they are different people.</p>
+          ${pairs.map((d, i) => `<div class="dpair" data-i="${i}"><div class="dwhy">${esc(d.why)}</div>
+            <div class="dcards">${personCard(d.a, (d.a.name.length >= d.b.name.length), 'keep' + i)}${personCard(d.b, (d.b.name.length > d.a.name.length), 'keep' + i)}</div>
+            <div class="actions"><button type="button" class="btn small" data-merge="${i}">Merge, keep selected name</button><button type="button" class="btn ghost small" data-notdupe="${i}">Not the same person</button></div></div>`).join('')}`
+        : '<p class="insight">✓ No possible duplicates left to review.</p>'}</div>`;
+      $('#dup').onclick = (e) => {
+        const t = e.target;
+        if (t.closest('[data-x]')) { dlg.close(); return; }
+        const m = t.closest('[data-merge]'), n = t.closest('[data-notdupe]');
+        if (m) {
+          const d = pairs[+m.dataset.merge], keep = dlg.querySelector(`input[name="keep${m.dataset.merge}"]:checked`).value;
+          const undo = mergeCustomers([d.a.key, d.b.key], keep);
+          toast(`Merged into ${keep}.`, { action: 'Undo', onAction: () => { undo(); if (dlg.open) draw(); } });
+          draw(); return;
+        }
+        if (n) {
+          const d = pairs[+n.dataset.notdupe];
+          (S.vault.notDupes ||= []).push(pairKey(d.a.key, d.b.key)); touch();
+          toast(`Got it: ${d.a.name} and ${d.b.name} are different people.`); draw();
+        }
+      };
+    };
+    dlg.onclose = () => { dlg.onclose = null; render(); };
+    draw();
+    if (!dlg.open) dlg.showModal();
+  }
+
+  function openMergeInto(key) {
+    const dlg = $('#dlg'), me = people().find((p) => p.key === key); if (!me) return;
+    const others = people().filter((p) => p.key !== key).sort((a, b) => a.name.localeCompare(b.name));
+    dlg.innerHTML = `<div class="tagger" id="mg">
+      <div class="tg-top"><h2 style="margin:0">Merge ${esc(me.name)} with…</h2><span style="flex:1"></span><button class="btn ghost small" data-back>Back</button></div>
+      <p class="muted" style="margin:0">Choose the other customer record that is the same person. All of their orders will be listed under one name.</p>
+      <label>Other customer<input id="mg-q" list="mg-list" placeholder="Start typing a name…" autocomplete="off"></label>
+      <datalist id="mg-list">${others.map((p) => `<option value="${esc(p.name)}">${plural(p.orders.length, 'order')}</option>`).join('')}</datalist>
+      <div id="mg-pick"></div></div>`;
+    const pick = () => {
+      const other = others.find((p) => p.name.toLowerCase() === $('#mg-q').value.trim().toLowerCase());
+      $('#mg-pick').innerHTML = other ? `<p class="muted small" style="margin:6px 0">Which name should they have?</p>
+        <div class="dcards">${personCard(me, me.name.length >= other.name.length, 'mgkeep')}${personCard(other, other.name.length > me.name.length, 'mgkeep')}</div>
+        <div class="actions" style="margin-top:12px"><button type="button" class="btn" data-domerge="${esc(other.key)}">Merge</button></div>` : '';
+    };
+    $('#mg-q').addEventListener('input', pick);
+    $('#mg').onclick = (e) => {
+      const t = e.target;
+      if (t.closest('[data-back]')) { openCustomer(key); return; }
+      const go = t.closest('[data-domerge]');
+      if (go) {
+        const keep = dlg.querySelector('input[name="mgkeep"]:checked').value;
+        const undo = mergeCustomers([key, go.dataset.domerge], keep);
+        toast(`Merged into ${keep}.`, { action: 'Undo', onAction: undo });
+        openCustomer(custKey(keep));
+      }
+    };
+    setTimeout(() => $('#mg-q') && $('#mg-q').focus(), 50);
   }
 
   function openCustomer(key) {
@@ -1175,12 +1296,13 @@
           <label>Best way to reach them<select name="prefer">${['', 'Text', 'Call', 'Email', 'Facebook', 'Instagram'].map((v) => `<option value="${v}"${v === c.prefer ? ' selected' : ''}>${v || '— select —'}</option>`).join('')}</select></label>
         </div>
         <button type="button" class="btn small" data-savecontact>Save to all ${plural(c.count + c.declined, 'order')}</button></details>
-      <div class="actions"><button type="button" class="btn" data-neworder>+ New order for ${esc(first)}</button></div></div>`;
+      <div class="actions"><button type="button" class="btn" data-neworder>+ New order for ${esc(first)}</button><button type="button" class="btn ghost" data-mergewith>Merge with another customer…</button></div></div>`;
     const cp = $('#cphotos'); if (cp) lazyThumbs(cp);
     $('#cu').onclick = (e) => {
       const t = e.target;
       if (t.closest('[data-x]')) { dlg.close(); return; }
       const h = t.closest('[data-oid]'); if (h) { dlg.onclose = null; dlg.close(); openEdit(h.dataset.oid); return; }
+      if (t.closest('[data-mergewith]')) { openMergeInto(key); return; }
       if (t.closest('[data-neworder]')) { dlg.onclose = null; dlg.close(); openEdit(null, { name: c.name, phone: c.phone, email: c.email, social: c.social, prefer: c.prefer }); return; }
       const pt = t.closest('[data-pid]'); if (pt) { const ids = ph.map((x) => x.id); openViewer(ids, ids.indexOf(pt.dataset.pid)); return; }
       if (t.closest('[data-savecontact]')) {
@@ -1800,6 +1922,7 @@
     if (t.closest('#lock, #lock-more')) { if (S.dirty && !confirm('You have unsaved changes. Lock anyway?')) return; S.dirty = false; location.reload(); return; }
     if (t.closest('[data-new]')) { openEdit(null); return; }
     if (t.closest('[data-tag]')) { openTagger(); return; }
+    if (t.closest('[data-dupes]')) { openDupes(); return; }
     const cu = t.closest('[data-cust]');
     if (cu && !t.closest('a') && !t.closest('dialog')) { openCustomer(cu.dataset.cust); return; }
     const cfb = t.closest('[data-cf]'); if (cfb) { S.cf = cfb.dataset.cf; render(); return; }
