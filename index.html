@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' blob: data:; connect-src 'self' https://api.github.com; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#faf6f0">
@@ -14,19 +16,13 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Cookie Jar">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <script>
-    // Set the theme before the page paints, so there is no light/dark flash.
-    (function () {
-      var p = 'auto'; try { p = localStorage.getItem('gcj_theme') || 'auto'; } catch (e) {}
-      document.documentElement.dataset.theme = p === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : p;
-    })();
-  </script>
+  <script src="theme-init.js"></script>
   <title>Gina's Cookie Jar · Owner Portal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
-  <link rel="stylesheet" href="styles.css?v=40">
-  <link rel="stylesheet" href="portal.css?v=40">
+  <link rel="stylesheet" href="styles.css?v=41">
+  <link rel="stylesheet" href="portal.css?v=41">
 </head>
 <body class="portal">
   <a class="skip" href="#main">Skip to content</a>
@@ -94,6 +90,6 @@
 
   <dialog id="dlg"></dialog>
   <dialog id="dlg2"></dialog>
-  <script src="portal.js?v=40"></script>
+  <script src="portal.js?v=41"></script>
 </body>
 </html>

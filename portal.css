@@ -928,3 +928,4 @@ dialog, #dlg2 { border-radius: 18px; box-shadow: var(--shadow-lg); border: 1px s
 .tagger label.dcard { display: flex; align-items: center; gap: 12px; font-weight: 400; }
 .tagger label.dcard .dc-body b { font-weight: 700; }
 .tokwhy { margin: 6px 0 0; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--danger) 10%, var(--surface)); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
+.lockrow { display: flex !important; align-items: center; gap: 10px; flex-wrap: wrap; font-weight: 600; }

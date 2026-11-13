@@ -145,7 +145,26 @@
   }
 
   /* ---------- GitHub storage ---------- */
-  const tok = () => { try { return localStorage.getItem('gcj_token') || ''; } catch { return ''; } };
+  // The GitHub token is stored on this device ENCRYPTED with your login key, so other pages on
+  // ant56-arch.github.io (your other sites) cannot use it. It is only unlocked in memory after login.
+  let memToken = '';
+  const tok = () => memToken;
+  async function storeToken(v) {
+    memToken = v || '';
+    try {
+      localStorage.removeItem('gcj_token');                       // never keep a readable copy
+      if (!memToken) { localStorage.removeItem('gcj_token_enc'); return; }
+      localStorage.setItem('gcj_token_enc', b64e(await encBytes(new TextEncoder().encode(memToken))));
+    } catch { /* storage unavailable: token stays for this visit only */ }
+  }
+  async function unlockToken() {
+    try {
+      const legacy = localStorage.getItem('gcj_token');           // older versions stored it readable
+      if (legacy) { await storeToken(legacy); return; }
+      const e = localStorage.getItem('gcj_token_enc'); if (!e) return;
+      memToken = new TextDecoder().decode(await decBytes(b64d(e)));
+    } catch { memToken = ''; }                                     // saved under an older password: ask again
+  }
   const api = `https://api.github.com/repos/${CFG.owner}/${CFG.repo}/contents/${CFG.path}`;
   const hdr = () => ({ Authorization: `Bearer ${tok()}`, Accept: 'application/vnd.github+json' });
   async function ghGet() {
@@ -167,8 +186,9 @@
     404: 'This token does not include the momscookies repository. On GitHub, edit the token and add momscookies under Repository access.',
   };
   const authErr = (status) => Object.assign(new Error('auth'), { auth: true, status, why: AUTH_WHY[status] || 'GitHub refused this token.' });
+  const COMMITTER = { name: 'Cookie Jar portal', email: 'cookie-jar-portal@users.noreply.github.com' };
   async function ghPut(text, sha) {
-    const body = { message: 'Update portal data', content: btoa(text), branch: CFG.branch };
+    const body = { message: 'Update portal data', content: btoa(text), branch: CFG.branch, committer: COMMITTER, author: COMMITTER };
     if (sha) body.sha = sha;
     const r = await fetch(api, { method: 'PUT', headers: { ...hdr(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (r.status === 409 || r.status === 422) throw Object.assign(new Error('conflict'), { conflict: true });
@@ -205,7 +225,7 @@
   const decBytes = async (u8) => new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: u8.slice(0, 12) }, S.key, u8.slice(12)));
   async function ghPutFile(path, u8) {
     const r = await fetch(apiBase + path, { method: 'PUT', headers: { ...hdr(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: 'Add photo', content: bytesToB64(u8), branch: CFG.branch }) });
+      body: JSON.stringify({ message: 'Add photo', content: bytesToB64(u8), branch: CFG.branch, committer: COMMITTER, author: COMMITTER }) });
     if (r.status === 401 || r.status === 403 || r.status === 404) { const e = authErr(r.status); S.authWhy = e.why; throw new Error(e.why); }
     if (!r.ok) throw new Error('GitHub ' + r.status);
   }
@@ -214,7 +234,7 @@
     if (m.status === 404) return;
     if (!m.ok) throw new Error('GitHub ' + m.status);
     const { sha } = await m.json();
-    const r = await fetch(apiBase + path, { method: 'DELETE', headers: { ...hdr(), 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'Remove photo', sha, branch: CFG.branch }) });
+    const r = await fetch(apiBase + path, { method: 'DELETE', headers: { ...hdr(), 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'Remove photo', sha, branch: CFG.branch, committer: COMMITTER, author: COMMITTER }) });
     if (!r.ok && r.status !== 404) throw new Error('GitHub ' + r.status);
   }
   const photoCache = new Map();
@@ -423,6 +443,7 @@
       <button class="btn full" type="submit" id="unlock">Unlock</button>
       <div class="err" id="err" role="alert"></div>
       <p class="muted small">Your data is encrypted; it's only decrypted in this browser.</p></form>`;
+    try { const m = sessionStorage.getItem('gcj_locked'); if (m) $('#err').textContent = `Locked after ${m} minutes of no use. Log in again to continue.`; } catch { /* ignore */ }
     $('#showpw').addEventListener('change', (e) => { $('#p').type = e.target.checked ? 'text' : 'password'; });
     $('#lf').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -436,7 +457,10 @@
         $('#err').textContent = 'That username and password did not match. Check capital letters and spaces. Tap “Show password” to see what you typed.';
         return;
       }
+      await unlockToken();
+      try { if (sessionStorage.getItem('gcj_locked')) sessionStorage.removeItem('gcj_locked'); } catch { /* ignore */ }
       enterApp(tok() ? 'saved' : 'local');
+      if (tok()) refreshFromRemote();   // the published copy can lag a little: pick up anything newer
     });
   }
 
@@ -463,7 +487,7 @@
         S.salt = crypto.getRandomValues(new Uint8Array(16));
         S.key = await derive($('#u').value.trim(), $('#p').value, S.salt, S.iter);
         const t = $('#t').value.trim();
-        if (t) { try { localStorage.setItem('gcj_token', t); } catch { /* ignore */ } }
+        if (t) await storeToken(t.replace(/\s+/g, '')); else await unlockToken();   // keep (and lock) a token this device already had
         S.sha = null; S.dirty = true;
         enterApp(tok() ? 'dirty' : 'local');
         if (tok()) save();
@@ -1903,6 +1927,14 @@
         <p class="muted small">${plural(S.vault.orders.length, 'order')} ${S.vault.orders.length === 1 ? 'is' : 'are'} in the portal now. Importing reads your .xlsx in this browser (it is not uploaded) and <b>replaces</b> the orders and reference sheets.</p>
         <div class="bar"><input id="imp-file" type="file" accept=".xlsx,.xls" aria-label="Excel workbook to import"><button class="btn small" id="imp-go">Import</button></div>
         <div class="err" id="imp-msg" role="status"></div></div>
+      <div class="panel help" style="margin-top:16px"><h3>Security</h3>
+        <label class="lockrow">Lock automatically after
+          <select id="autolock">${[[5, '5 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour'], [0, 'Never']].map(([v, l]) => `<option value="${v}"${autoLockMins() === v ? ' selected' : ''}>${l} of no use</option>`).join('')}</select></label>
+        <ul class="facts" style="margin-top:12px">
+          <li>Your GitHub token is stored on this device <b>encrypted with your password</b>, so your other websites cannot use it.</li>
+          <li>Saves to GitHub are labeled <b>Cookie Jar portal</b>, not with your email.</li>
+          <li>This page only runs its own code. Outside scripts are blocked.</li>
+        </ul></div>
       <div class="panel help" style="margin-top:16px"><h3>Appearance</h3>
         <div class="seg" role="group" aria-label="Theme">${[['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button data-theme-set="${v}" aria-pressed="${themePref() === v}">${l}</button>`).join('')}</div>
         <p class="muted small">Auto follows your phone or computer setting.</p></div>
@@ -1973,7 +2005,7 @@
       if (!v) return;
       if (!/^(github_pat_|ghp_)/.test(v)) { $('#tok-msg').textContent = 'That does not look like a GitHub token. It should start with github_pat_.'; return; }
       const prev = tok();
-      try { localStorage.setItem('gcj_token', v); } catch { /* ignore */ }
+      await storeToken(v);
       $('#tok-msg').className = 'muted small'; $('#tok-msg').textContent = 'Checking with GitHub…';
       S.authWhy = '';
       try {
@@ -1988,17 +2020,18 @@
         if (!S.authWhy) S.authWhy = e.status ? AUTH_WHY[e.status] : 'GitHub could not be reached. Check your internet connection and try again.';
         setSave(e.status ? 'auth' : 'error');
       }
-      if (S.authWhy && prev && prev !== v) { try { localStorage.setItem('gcj_token', prev); } catch { /* ignore */ } } // keep the old one if the new one fails
+      if (S.authWhy && prev && prev !== v) await storeToken(prev); // keep the old one if the new one fails
       if (!S.authWhy && $('#savestate').textContent.includes('Saved')) toast('✓ Token works. Your changes are saving to GitHub.');
       render();
       return;
     }
-    if (t.id === 'tok-clear') { try { localStorage.removeItem('gcj_token'); } catch { /* ignore */ } setSave('local'); render(); return; }
+    if (t.id === 'tok-clear') { await storeToken(''); setSave('local'); render(); return; }
     if (t.id === 'pw-save') {
       const u = $('#nu').value.trim(), p = $('#np').value;
       if (!u || p.length < 12) { $('#pw-msg').textContent = 'Enter a username and a password of 12+ characters.'; return; }
       S.salt = crypto.getRandomValues(new Uint8Array(16));
       S.key = await derive(u, p, S.salt, S.iter);
+      if (memToken) await storeToken(memToken);   // re-lock the token with the new password
       touch(); $('#pw-msg').textContent = 'Changed. Use the new login next time.'; $('#np').value = '';
       return;
     }
@@ -2027,6 +2060,7 @@
     if (t.id === 'oyear') { S.oyear = t.value; render(); }
     if (t.id === 'osort') { S.sort = t.value; render(); }
     if (t.id === 'year') { S.year = t.value; render(); }
+    if (t.id === 'autolock') { try { localStorage.setItem('gcj_autolock', t.value); } catch { /* ignore */ } toast(+t.value ? `The portal will lock after ${t.options[t.selectedIndex].text}.` : 'Auto-lock is off. Remember to press Lock.'); return; }
     if (t.id === 'csort') { S.csort = t.value; drawCustomers(); return; }
     if (t.id === 'p-occ') { S.pOcc = t.value; drawPhotoGrid(); return; }
     if (t.id === 'p-year') { S.pYear = t.value; drawPhotoGrid(); return; }
@@ -2049,6 +2083,19 @@
     withTransition(() => { render(); window.scrollTo(0, 0); });
   }
   window.addEventListener('popstate', () => { if (S.vault) goTab(location.hash.slice(1) || 'home', false); });
+  // ---------- auto-lock ----------
+  const autoLockMins = () => { try { const v = localStorage.getItem('gcj_autolock'); return v === null ? 15 : +v; } catch { return 15; } };
+  let lastActive = Date.now();
+  ['pointerdown', 'keydown', 'scroll', 'touchstart'].forEach((ev) => window.addEventListener(ev, () => { lastActive = Date.now(); }, { passive: true }));
+  async function checkAutoLock() {
+    const mins = autoLockMins();
+    if (!S.vault || !mins || Date.now() - lastActive < mins * 60000) return;
+    if (S.dirty) { if (tok() && navigator.onLine && !saving) await save(); if (S.dirty) return; }   // never lose unsaved work
+    try { sessionStorage.setItem('gcj_locked', String(mins)); } catch { /* ignore */ }
+    memToken = ''; S.vault = null; S.key = null; location.reload();
+  }
+  setInterval(checkAutoLock, 30000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkAutoLock(); });
   let deferredInstall = null;
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredInstall = e; if (S.vault && S.tab === 'settings') render(); });
   document.addEventListener('keydown', (e) => {
