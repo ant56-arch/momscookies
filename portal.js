@@ -464,7 +464,7 @@
 
   function enterApp(state) {
     $('#gate').hidden = true; $('#app').hidden = false; window.scrollTo(0, 0);
-    const want = location.hash.slice(1); if (['home', 'orders', 'calendar', 'photos', 'money', 'calculator', 'workbook', 'settings', 'more'].includes(want)) S.tab = want;
+    const want = location.hash.slice(1); if (['home', 'orders', 'customers', 'calendar', 'photos', 'money', 'calculator', 'workbook', 'settings', 'more'].includes(want)) S.tab = want;
     setSave(state);
     loadSite().then(render);
     render();
@@ -474,11 +474,11 @@
 
   /* ---------- tabs ---------- */
   function render() {
-    const moreSet = ['more', 'photos', 'calculator', 'workbook', 'settings'];
+    const moreSet = ['more', 'customers', 'photos', 'calculator', 'workbook', 'settings'];
     document.querySelectorAll('#tabs button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === S.tab)));
     document.querySelectorAll('#bottomnav button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === S.tab || (b.dataset.tab === 'more' && moreSet.includes(S.tab)))));
     const main = $('#main');
-    const views = { home: viewHome, more: viewMore, photos: viewPhotos, orders: viewOrders, calendar: viewCalendar, money: viewMoney, calculator: viewCalculator, workbook: viewWorkbook, settings: viewSettings };
+    const views = { home: viewHome, more: viewMore, photos: viewPhotos, customers: viewCustomers, orders: viewOrders, calendar: viewCalendar, money: viewMoney, calculator: viewCalculator, workbook: viewWorkbook, settings: viewSettings };
     (views[S.tab] || viewHome)(main);
   }
 
@@ -905,6 +905,7 @@
       return { l: d.toLocaleDateString(undefined, { month: 'short' }), v: sumPaid(`${d.getFullYear()}-${pad(d.getMonth() + 1)}`) };
     });
     const attention = [...overdue, ...undated];
+    const ins = insights();
     const monShort = (iso) => new Date(iso + 'T00:00').toLocaleDateString(undefined, { month: 'short' });
     const cuRow = (o) => `<div class="cu st-${o.status}" data-id="${o.id}"><span class="datebadge"><small>${monShort(o.due)}</small><b>${+o.due.slice(8, 10)}</b></span>
       <span class="cu-main"><b>${esc(o.name)}</b><small>${esc(o.event || o.type || '')}${o.event || o.type ? ' · ' : ''}${cookiesOf(o.qty)}${esc(relDue(o.due, today))}</small></span>
@@ -926,18 +927,32 @@
         <div class="kpi"><span class="kic">${ico('cal')}</span><b>${money(sumPaid(today.slice(0, 7)))}</b><span>Collected in ${now.toLocaleDateString(undefined, { month: 'long' })}</span></div>
         <div class="kpi"><span class="kic">${ico('trend')}</span><b>${money(sumPaid(today.slice(0, 4)))}</b><span>Collected in ${now.getFullYear()}</span></div>
       </div>
-      <div class="panels">
-        <div class="panel"><h3>Coming up</h3>
-          ${upcoming.length ? upcoming.slice(0, 6).map(cuRow).join('') : '<p class="muted">No upcoming pickups. Add an order to get started.</p>'}
-          ${upcoming.length > 6 ? '<button class="btn ghost small" data-tab="calendar">See all in calendar</button>' : ''}</div>
-        <div class="panel"><h3>Needs attention</h3>
-          ${attention.length ? `<div class="sub">Overdue or no date</div>${attention.slice(0, 5).map(evRow).join('')}` : ''}
-          ${owed.length ? `<div class="sub">Balances owed</div>${owed.slice(0, 5).map(evRow).join('')}` : ''}
-          ${!attention.length && !owed.length ? '<p class="muted">All caught up. 🎉</p>' : ''}</div>
-      </div>
-      ${recent.length ? `<div class="panel"><div class="mhead"><h3>Recent photos</h3><button class="btn ghost small" data-tab="photos">See all</button></div>
-        <div class="pgrid small" id="homephotos">${recent.map((x) => `<button class="ptile" data-pid="${x.id}" aria-label="${esc(x.caption || 'Photo')}"></button>`).join('')}</div></div>` : ''}
-      <div class="panel"><h3>Collected, last 6 months</h3>${bars(months)}</div>`;
+      <div class="home-grid">
+        <div class="home-main">
+          <div class="panel"><h3>Coming up</h3>
+            ${upcoming.length ? upcoming.slice(0, 6).map(cuRow).join('') : '<p class="muted">No upcoming pickups. Add an order to get started.</p>'}
+            ${upcoming.length > 6 ? '<button class="btn ghost small" data-tab="calendar">See all in calendar</button>' : ''}</div>
+          <div class="panel"><div class="mhead"><h3>Collected, last 6 months</h3><button class="btn ghost small" data-tab="money">Money details</button></div>${bars(months)}</div>
+          <div class="panel"><h3>Your busiest months</h3><p class="muted small" style="margin:-4px 0 10px">Completed orders by month, all years together. Plan ahead for the tall ones.</p>${bars(ins.byMon.map((v, i) => ({ l: monthName(i, 'short'), v })), (v) => String(v))}</div>
+        </div>
+        <aside class="home-rail">
+          <div class="panel"><h3>Needs attention</h3>
+            ${attention.length ? `<div class="sub">Overdue or no date</div>${attention.slice(0, 5).map(evRow).join('')}` : ''}
+            ${owed.length ? `<div class="sub">Balances owed</div>${owed.slice(0, 5).map(evRow).join('')}` : ''}
+            ${!attention.length && !owed.length ? '<p class="muted">All caught up. 🎉</p>' : ''}</div>
+          <div class="panel"><div class="mhead"><h3>Top customers</h3><button class="btn ghost small" data-tab="customers">All customers</button></div>
+            ${ins.top.slice(0, 5).map((c, i) => `<button type="button" class="topc" data-cust="${esc(c.key)}"><span class="rank">${i + 1}</span>${avatar(c.name)}<span class="tc-name"><b>${esc(c.name)}</b><small>${plural(c.count, 'order')}</small></span><span class="tc-spent">${money(c.spent)}</span></button>`).join('') || '<p class="muted">No customers yet.</p>'}</div>
+          <div class="panel"><h3>Quick facts</h3>
+            <ul class="facts">
+              <li><b>${Math.round(ins.repeatPct * 100)}%</b> of customers ordered more than once</li>
+              ${ins.leadMedian !== null ? `<li>People usually order <b>${plural(ins.leadMedian, 'day')}</b> before pickup</li>` : ''}
+              <li><b>${monthName(ins.busiest)}</b> is your busiest month</li>
+              <li><b>${Math.round(ins.conv * 100)}%</b> of inquiries became orders</li>
+            </ul><button class="btn ghost small" data-tab="money">See all insights</button></div>
+          ${recent.length ? `<div class="panel"><div class="mhead"><h3>Recent photos</h3><button class="btn ghost small" data-tab="photos">See all</button></div>
+            <div class="pgrid small" id="homephotos">${recent.map((x) => `<button class="ptile" data-pid="${x.id}" aria-label="${esc(x.caption || 'Photo')}"></button>`).join('')}</div></div>` : ''}
+        </aside>
+      </div>`;
     const hp = $('#homephotos');
     if (hp) { lazyThumbs(hp); hp.onclick = (e) => { const t = e.target.closest('[data-pid]'); if (t) { const ids = recent.map((x) => x.id); openViewer(ids, ids.indexOf(t.dataset.pid)); } }; }
   }
@@ -945,6 +960,7 @@
   function viewMore(main) {
     const card = (tab, icon, title, text) => `<button class="linkcard" data-tab="${tab}"><span class="emo">${icon}</span><b>${title}</b><span class="muted">${text}</span></button>`;
     main.innerHTML = `<h2>More</h2><div class="linkcards">
+      ${card('customers', ico('users'), 'Customers', 'Everyone who has ordered, with history and contact info')}
       ${card('photos', ico('photo'), 'Photos', 'Your cookie photos and inspiration')}
       ${card('calculator', ico('calc'), 'Price calculator', 'Quote a set of cookies')}
       ${card('workbook', ico('book'), 'Workbook', 'Recipe and cost sheets')}
@@ -1044,15 +1060,140 @@
     return Object.values(years).sort((a, b) => a.y - b.y);
   }
   function bars(items, fmt = (v) => '$' + Math.round(v).toLocaleString()) {
-    const W = Math.max(320, items.length * 54), H = 190, pad = 28, max = Math.max(1, ...items.map((i) => i.v));
-    const slot = (W - 20) / items.length, bw = Math.min(38, slot - 8);
-    return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Bar chart">${items.map((it, i) => {
-      const h = (H - pad * 2) * it.v / max, x = 10 + i * slot + (slot - bw) / 2, y = H - pad - h;
-      return `<rect x="${x}" y="${y}" width="${bw}" height="${h}" rx="4" fill="var(--accent)"/>
-        <text class="bv" x="${x + bw / 2}" y="${y - 5}">${it.v ? fmt(it.v) : ''}</text>
-        <text x="${x + bw / 2}" y="${H - 9}">${esc(it.l)}</text>`;
-    }).join('')}</svg>`;
+    const max = Math.max(1, ...items.map((i) => i.v));
+    return `<div class="vbars" role="img" aria-label="Bar chart">${items.map((it) => `<div class="vb" title="${esc(it.l)}: ${esc(fmt(it.v))}">
+      <span class="vb-v">${it.v ? esc(fmt(it.v)) : ''}</span><i style="height:${Math.max(it.v ? 3 : 0, it.v / max * 100).toFixed(1)}%"></i><span class="vb-l">${esc(it.l)}</span></div>`).join('')}</div>`;
   }
+  /* ---------- customers ---------- */
+  const custKey = (n) => String(n || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const initials = (n) => String(n || '?').replace(/\(.*?\)/g, '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
+  const hueOf = (n) => { let h = 0; for (const ch of custKey(n)) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
+  const avatar = (n, cls = '') => `<span class="avatar ${cls}" style="--hue:${hueOf(n)}" aria-hidden="true">${esc(initials(n))}</span>`;
+  function customers() {
+    const map = new Map();
+    for (const o of S.vault.orders) {
+      const k = custKey(o.name); if (!k) continue;
+      let c = map.get(k);
+      if (!c) map.set(k, (c = { key: k, name: o.name, orders: [], declined: 0 }));
+      if (o.status === 'Declined') c.declined++; else c.orders.push(o);
+    }
+    const out = [];
+    for (const c of map.values()) {
+      if (!c.orders.length) continue;
+      const os = c.orders.sort(newestFirst), latest = os[0], oldest = os[os.length - 1];
+      c.name = latest.name; c.count = os.length; c.done = os.filter((o) => o.status === 'Completed').length;
+      c.spent = os.reduce((t, o) => t + num(o.paid), 0);
+      c.owed = os.filter(owes).reduce((t, o) => t + balance(o), 0);
+      c.cookies = os.reduce((t, o) => t + num(o.qty), 0);
+      c.last = latest.due || latest.requested || ''; c.first = oldest.due || oldest.requested || '';
+      const occ = {}; os.forEach((o) => { const n = occasionOf(o).name; if (n !== 'Not set') occ[n] = (occ[n] || 0) + 1; });
+      c.occ = Object.entries(occ).sort((a, b) => b[1] - a[1]);
+      const wc = os.map((o) => splitContact({ ...o })).find((o) => o.phone || o.email || o.social) || {};
+      c.phone = wc.phone || ''; c.email = wc.email || ''; c.social = wc.social || ''; c.prefer = wc.prefer || '';
+      out.push(c);
+    }
+    return out;
+  }
+
+  function insights() {
+    const orders = S.vault.orders, done = orders.filter((o) => o.status === 'Completed'), declined = orders.filter((o) => o.status === 'Declined');
+    const cs = customers(), repeat = cs.filter((c) => c.done > 1);
+    const leads = done.map((o) => (o.requested && o.due ? Math.round((new Date(o.due) - new Date(o.requested)) / 864e5) : null)).filter((d) => d !== null && d >= 0 && d < 400).sort((a, b) => a - b);
+    const byMon = Array(12).fill(0); done.forEach((o) => { const d = o.due || o.requested; if (d) byMon[+d.slice(5, 7) - 1]++; });
+    const reasons = {}; declined.forEach((o) => { const r = o.reason ? o.reason.charAt(0).toUpperCase() + o.reason.slice(1).toLowerCase() : 'No reason given'; reasons[r] = (reasons[r] || 0) + 1; });
+    const top = cs.slice().sort((a, b) => b.spent - a.spent);
+    return {
+      customers: cs.length, repeat: repeat.length, repeatPct: cs.length ? repeat.length / cs.length : 0,
+      repeatShare: done.length ? done.filter((o) => repeat.some((c) => c.key === custKey(o.name))).reduce((t, o) => t + num(o.paid), 0) / Math.max(1, done.reduce((t, o) => t + num(o.paid), 0)) : 0,
+      leadMedian: leads.length ? leads[Math.floor(leads.length / 2)] : null, leadShort: leads.length ? leads.filter((d) => d < 7).length / leads.length : 0,
+      byMon, busiest: byMon.indexOf(Math.max(...byMon)),
+      reasons: Object.entries(reasons).sort((a, b) => b[1] - a[1]),
+      busy: declined.filter((o) => /busy|rush/i.test(o.reason || '')).length,
+      conv: done.length + declined.length ? done.length / (done.length + declined.length) : 0,
+      avgOrder: done.length ? done.reduce((t, o) => t + num(o.paid), 0) / done.length : 0,
+      top,
+    };
+  }
+  const monthName = (i, style = 'long') => new Date(2000, i, 1).toLocaleDateString(undefined, { month: style });
+
+  function viewCustomers(main) {
+    const all = customers(), ins = insights();
+    const chip = (k, l, c) => `<button class="chip" data-cf="${k}" aria-selected="${(S.cf || 'all') === k}">${l} (${c})</button>`;
+    const top = ins.top[0];
+    main.innerHTML = `${pageHead('Customers', `${plural(all.length, 'customer')} · ${ins.repeat} came back for more`, '<button class="btn small" data-new>+ New order</button>')}
+      <div class="kpis">
+        <div class="kpi"><span class="kic">${ico('users')}</span><b>${all.length}</b><span>Customers</span></div>
+        <div class="kpi"><span class="kic">${ico('repeat')}</span><b>${Math.round(ins.repeatPct * 100)}%</b><span>Ordered more than once</span></div>
+        <div class="kpi"><span class="kic">${ico('money')}</span><b>${money(all.length ? all.reduce((t, c) => t + c.spent, 0) / all.length : 0)}</b><span>Average spent per customer</span></div>
+        <div class="kpi"><span class="kic">${ico('trend')}</span><b style="font-size:1.15rem">${top ? esc(top.name) : '—'}</b><span>${top ? 'Top customer · ' + money(top.spent) : 'Top customer'}</span></div>
+      </div>
+      <div class="bar"><input class="grow" id="cq" type="search" placeholder="Search customers, phone, email…" value="${esc(S.cq || '')}"></div>
+      <div class="bar">${chip('all', 'All', all.length)}${chip('repeat', 'Repeat', all.filter((c) => c.count > 1).length)}${chip('owes', 'Owes money', all.filter((c) => c.owed > 0.005).length)}${chip('nocontact', 'No contact info', all.filter((c) => !c.phone && !c.email && !c.social).length)}
+        <span class="sp"></span><select id="csort" aria-label="Sort">${[['spent', 'Top spenders'], ['orders', 'Most orders'], ['recent', 'Most recent'], ['name', 'Name A–Z']].map(([v, l]) => `<option value="${v}"${(S.csort || 'spent') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div id="clist" class="clist"></div>`;
+    drawCustomers();
+  }
+  function drawCustomers() {
+    const el = $('#clist'); if (!el) return;
+    const q = (S.cq || '').toLowerCase(), f = S.cf || 'all';
+    const sorts = { spent: (a, b) => b.spent - a.spent, orders: (a, b) => b.count - a.count || b.spent - a.spent, recent: (a, b) => b.last.localeCompare(a.last), name: (a, b) => a.name.localeCompare(b.name) };
+    const list = customers().filter((c) => (f === 'all' || (f === 'repeat' && c.count > 1) || (f === 'owes' && c.owed > 0.005) || (f === 'nocontact' && !c.phone && !c.email && !c.social))
+      && (!q || [c.name, c.phone, c.email, c.social].join(' ').toLowerCase().includes(q))).sort(sorts[S.csort || 'spent']);
+    el.innerHTML = list.length ? `<div class="crow chead"><span></span><span>Customer</span><span>Orders</span><span>Spent</span><span>Last order</span><span>Usually orders for</span><span>Balance</span></div>
+      ${list.map((c) => `<div class="crow" data-cust="${esc(c.key)}" role="button" tabindex="0" aria-label="${esc(c.name)}">${avatar(c.name)}
+        <span class="cr-name"><b>${esc(c.name)}</b><small>${c.phone ? `<a href="${esc(telHref(c.phone))}">${esc(c.phone)}</a>` : c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : esc(c.social) || '<span class="muted">No contact info</span>'}</small></span>
+        <span class="cr-n">${plural(c.count, 'order')}</span><span class="cr-spent">${money(c.spent)}</span>
+        <span class="cr-last">${esc(fmtDate(c.last)) || '—'}</span>
+        <span class="cr-occ">${c.occ.length ? `${OCC_EMOJI[c.occ[0][0]] || ''} ${esc(c.occ[0][0])}` : '<span class="muted">—</span>'}</span>
+        <span class="cr-owe ${c.owed > 0.005 ? 'neg' : 'muted'}">${c.owed > 0.005 ? money(c.owed) + ' due' : '✓'}</span></div>`).join('')}`
+      : '<p style="padding:18px" class="muted">No customers match.</p>';
+  }
+
+  function openCustomer(key) {
+    const c = customers().find((x) => x.key === key); if (!c) return;
+    const dlg = $('#dlg');
+    const ph = photos().filter((p) => c.orders.some((o) => o.id === p.orderId));
+    const first = c.name.split(/\s+/)[0];
+    dlg.innerHTML = `<div class="tagger cust" id="cu">
+      <div class="cu-head">${avatar(c.name, 'lg')}<div><h2 style="margin:0">${esc(c.name)}</h2>
+        <p class="muted" style="margin:2px 0 0">Customer since ${esc(fmtDate(c.first)) || '—'}${c.declined ? ` · ${plural(c.declined, 'other inquiry', 'other inquiries')}` : ''}</p></div>
+        <span style="flex:1"></span><button class="btn ghost small" data-x>Close</button></div>
+      <div class="cacts">${c.phone ? `<a class="btn ghost small" href="${esc(telHref(c.phone))}">${ico('phone')} Call</a><a class="btn ghost small" href="${esc(smsHref(c.phone))}">${ico('chat')} Text</a>` : ''}${c.email ? `<a class="btn ghost small" href="mailto:${esc(c.email)}">${ico('mail')} Email</a>` : ''}
+        ${c.phone || c.email || c.social ? `<span class="muted small">${[c.phone, c.email, c.social].filter(Boolean).map(esc).join(' · ')}${c.prefer ? ` · prefers ${esc(c.prefer)}` : ''}</span>` : '<span class="muted small">No contact info yet. Add it below.</span>'}</div>
+      <div class="ministats">
+        <div><b>${money(c.spent)}</b><span>Spent</span></div><div><b>${c.count}</b><span>${c.count === 1 ? 'Order' : 'Orders'}</span></div>
+        <div><b>${money(c.count ? c.spent / c.count : 0)}</b><span>Average order</span></div><div><b>${c.cookies.toLocaleString()}</b><span>Cookies</span></div>
+        <div><b class="${c.owed > 0.005 ? 'neg' : ''}">${money(c.owed)}</b><span>Owed</span></div></div>
+      ${c.occ.length ? `<div class="occchips">${c.occ.map(([n, k]) => `<span class="pill">${OCC_EMOJI[n] || ''} ${esc(n)} · ${k}</span>`).join('')}</div>` : ''}
+      <h3>Order history</h3>
+      <div class="hist">${c.orders.map((o) => `<button type="button" class="hrow st-${o.status}" data-oid="${o.id}"><span>${esc(fmtDate(o.due || o.requested)) || 'No date'}</span><span class="h-ev">${esc(o.event || o.type || '—')}</span><span>${cookiesOf(o.qty)}</span><span>${o.amtDue == null ? '' : money(o.amtDue)}</span><span class="pill st-${o.status}">${o.status}</span></button>`).join('')}</div>
+      ${ph.length ? `<h3>Photos</h3><div class="pgrid small" id="cphotos">${ph.map((x) => `<button class="ptile" data-pid="${x.id}" aria-label="Photo"></button>`).join('')}</div>` : ''}
+      <details class="cedit"><summary>Edit contact info</summary>
+        <div class="fgrid">
+          <label>Phone<input name="phone" type="tel" value="${esc(c.phone)}"></label><label>Email<input name="email" type="email" value="${esc(c.email)}"></label>
+          <label>Facebook or Instagram<input name="social" value="${esc(c.social)}"></label>
+          <label>Best way to reach them<select name="prefer">${['', 'Text', 'Call', 'Email', 'Facebook', 'Instagram'].map((v) => `<option value="${v}"${v === c.prefer ? ' selected' : ''}>${v || '— select —'}</option>`).join('')}</select></label>
+        </div>
+        <button type="button" class="btn small" data-savecontact>Save to all ${plural(c.count + c.declined, 'order')}</button></details>
+      <div class="actions"><button type="button" class="btn" data-neworder>+ New order for ${esc(first)}</button></div></div>`;
+    const cp = $('#cphotos'); if (cp) lazyThumbs(cp);
+    $('#cu').onclick = (e) => {
+      const t = e.target;
+      if (t.closest('[data-x]')) { dlg.close(); return; }
+      const h = t.closest('[data-oid]'); if (h) { dlg.onclose = null; dlg.close(); openEdit(h.dataset.oid); return; }
+      if (t.closest('[data-neworder]')) { dlg.onclose = null; dlg.close(); openEdit(null, { name: c.name, phone: c.phone, email: c.email, social: c.social, prefer: c.prefer }); return; }
+      const pt = t.closest('[data-pid]'); if (pt) { const ids = ph.map((x) => x.id); openViewer(ids, ids.indexOf(pt.dataset.pid)); return; }
+      if (t.closest('[data-savecontact]')) {
+        const box = $('#cu .cedit'), v = (n) => box.querySelector(`[name=${n}]`).value;
+        const vals = { phone: fixPhone(v('phone')), email: fixEmail(v('email')), social: tidySpace(v('social')), prefer: v('prefer') };
+        S.vault.orders.filter((o) => custKey(o.name) === key).forEach((o) => { Object.assign(o, vals); o.contact = ''; });
+        touch(); toast(`Contact info saved for ${c.name}.`); openCustomer(key);
+      }
+    };
+    dlg.onclose = () => { dlg.onclose = null; render(); };
+    if (!dlg.open) dlg.showModal();
+  }
+
   /* ---------- photos ---------- */
   const PHOTO_KINDS = [['finished', 'My work'], ['inspiration', 'Inspiration']];
   const newestFirst = (a, b) => (b.due || b.requested || '').localeCompare(a.due || a.requested || '');
@@ -1217,6 +1358,7 @@
         && (!q || [x.caption, x.occasion, (byId(x.orderId) || {}).name].join(' ').toLowerCase().includes(q)))
         .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.added || '').localeCompare(a.added || ''));
       const grid = $('#pgrid');
+      grid.classList.toggle('masonry', list.length > 0);
       grid.innerHTML = list.length ? list.map((x) => {
         const o = byId(x.orderId);
         return `<button class="ptile" data-pid="${x.id}" style="--ar:${x.w || 1} / ${x.h || 1}" aria-label="${esc(x.caption || (o && o.name) || 'Photo')}">
@@ -1423,6 +1565,22 @@
     dlg.showModal();
   }
 
+  function insightsSection() {
+    const ins = insights(), maxR = Math.max(1, ...ins.reasons.map((r) => r[1]));
+    const fact = (icon, big, text) => `<div class="fact">${ico(icon)}<b>${big}</b><span>${text}</span></div>`;
+    return `<div class="panel insights"><div class="mhead"><h3>Insights</h3><span class="muted small">From all ${plural(S.vault.orders.length, 'order')} and inquiries</span></div>
+      <div class="factgrid">
+        ${fact('repeat', Math.round(ins.repeatPct * 100) + '%', `of customers came back (${ins.repeat} of ${ins.customers}). Repeat customers brought in <b>${Math.round(ins.repeatShare * 100)}%</b> of your revenue.`)}
+        ${ins.leadMedian !== null ? fact('cal', plural(ins.leadMedian, 'day'), `is the usual time between an order and its pickup. ${Math.round(ins.leadShort * 100)}% came in less than a week ahead.`) : ''}
+        ${fact('trend', monthName(ins.busiest), `is your busiest month, with ${plural(ins.byMon[ins.busiest], 'completed order')} over the years.`)}
+        ${fact('orders', Math.round(ins.conv * 100) + '%', 'of all inquiries turned into a completed order.')}
+        ${fact('money', money(ins.avgOrder), 'is your average completed order.')}
+        ${ins.busy ? fact('clock', String(ins.busy), `${ins.busy === 1 ? 'request was' : 'requests were'} turned down because you were too busy or it was too rushed.`) : ''}
+      </div>
+      ${ins.reasons.length ? `<h3 style="margin-top:18px">Why inquiries didn't become orders</h3>${ins.reasons.slice(0, 7).map(([r, n]) => `<div class="hbar"><span>${esc(r)}</span><i style="width:${Math.max(3, n / maxR * 100)}%"></i><span>${n}</span></div>`).join('')}` : ''}
+    </div>`;
+  }
+
   /* ---------- monthly revenue ---------- */
   function monthStats(year) {
     const arr = Array.from({ length: 12 }, (_, i) => ({ i, rev: 0, orders: 0, cookies: 0, up: 0, upN: 0 }));
@@ -1523,6 +1681,7 @@
         <div class="kpi"><b>${money(pipeline)}</b><span>Open orders (quoted)</span></div>
         <div class="kpi"><b class="${owing.length ? 'neg' : ''}">${money(owing.reduce((s, o) => s + balance(o), 0))}</b><span>Outstanding balances</span></div>
       </div>
+      ${insightsSection()}
       ${monthlySection(cur)}
       ${occasionSection(cur)}
       <div class="panel"><h3>By year</h3><div class="yeargrid">
@@ -1641,6 +1800,9 @@
     if (t.closest('#lock, #lock-more')) { if (S.dirty && !confirm('You have unsaved changes. Lock anyway?')) return; S.dirty = false; location.reload(); return; }
     if (t.closest('[data-new]')) { openEdit(null); return; }
     if (t.closest('[data-tag]')) { openTagger(); return; }
+    const cu = t.closest('[data-cust]');
+    if (cu && !t.closest('a') && !t.closest('dialog')) { openCustomer(cu.dataset.cust); return; }
+    const cfb = t.closest('[data-cf]'); if (cfb) { S.cf = cfb.dataset.cf; render(); return; }
     const th = t.closest('[data-theme-set]');
     if (th) { try { localStorage.setItem('gcj_theme', th.dataset.themeSet); } catch { /* ignore */ } applyTheme(); render(); return; }
     if (t.id === 'install-app' && deferredInstall) { deferredInstall.prompt(); deferredInstall = null; render(); return; }
@@ -1722,6 +1884,7 @@
     if (t.id === 'oyear') { S.oyear = t.value; render(); }
     if (t.id === 'osort') { S.sort = t.value; render(); }
     if (t.id === 'year') { S.year = t.value; render(); }
+    if (t.id === 'csort') { S.csort = t.value; drawCustomers(); return; }
     if (t.id === 'p-occ') { S.pOcc = t.value; drawPhotoGrid(); return; }
     if (t.id === 'p-year') { S.pYear = t.value; drawPhotoGrid(); return; }
     if (t.id === 'cal-done') { S.calDone = t.checked; render(); }
@@ -1732,9 +1895,10 @@
   document.addEventListener('input', (e) => {
     if (e.target.id === 'q') { S.q = e.target.value; drawOrders(); }
     if (e.target.id === 'pq') { S.pq = e.target.value; drawPhotoGrid(); }
+    if (e.target.id === 'cq') { S.cq = e.target.value; drawCustomers(); }
   });
 
-  const TABS = ['home', 'orders', 'calendar', 'photos', 'money', 'calculator', 'workbook', 'settings', 'more'];
+  const TABS = ['home', 'orders', 'customers', 'calendar', 'photos', 'money', 'calculator', 'workbook', 'settings', 'more'];
   function goTab(tab, push = true) {
     if (!TABS.includes(tab)) return;
     S.tab = tab;
@@ -1746,6 +1910,7 @@
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredInstall = e; if (S.vault && S.tab === 'settings') render(); });
   document.addEventListener('keydown', (e) => {
     if (!S.vault || e.metaKey || e.ctrlKey || e.altKey || document.querySelector('dialog[open]')) return;
+    if (e.key === 'Enter' && e.target.closest && e.target.closest('[data-cust]')) { openCustomer(e.target.closest('[data-cust]').dataset.cust); return; }
     if (e.target.closest && e.target.closest('input, textarea, select')) return;
     if (e.key === '/') { e.preventDefault(); if (S.tab !== 'orders' && S.tab !== 'photos') { S.tab = 'orders'; render(); } const q = $('#q') || $('#pq'); if (q) q.focus(); }
     else if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openEdit(null); }
