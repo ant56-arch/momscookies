@@ -151,6 +151,7 @@
   async function ghGet() {
     const r = await fetch(`${api}?ref=${CFG.branch}&t=${Date.now()}`, { headers: hdr(), cache: 'no-store' });
     if (r.status === 404) return null;
+    if (r.status === 401 || r.status === 403) throw authErr(r.status);
     if (!r.ok) throw new Error('GitHub ' + r.status);
     const j = await r.json();
     if (!j.content) {
@@ -160,12 +161,18 @@
     }
     return { sha: j.sha, text: atob(j.content.replace(/\n/g, '')) };
   }
+  const AUTH_WHY = {
+    401: 'GitHub says this token is expired or not valid, so you need a new one. Make it on GitHub the same way as before.',
+    403: 'This token can read your data but is not allowed to save it. On GitHub, edit the token and set Contents to “Read and write”.',
+    404: 'This token does not include the momscookies repository. On GitHub, edit the token and add momscookies under Repository access.',
+  };
+  const authErr = (status) => Object.assign(new Error('auth'), { auth: true, status, why: AUTH_WHY[status] || 'GitHub refused this token.' });
   async function ghPut(text, sha) {
     const body = { message: 'Update portal data', content: btoa(text), branch: CFG.branch };
     if (sha) body.sha = sha;
     const r = await fetch(api, { method: 'PUT', headers: { ...hdr(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (r.status === 409 || r.status === 422) throw Object.assign(new Error('conflict'), { conflict: true });
-    if (r.status === 401 || r.status === 403 || r.status === 404) throw Object.assign(new Error('auth'), { auth: true });
+    if (r.status === 401 || r.status === 403 || r.status === 404) throw authErr(r.status);
     if (!r.ok) throw new Error('GitHub ' + r.status);
     return (await r.json()).content.sha;
   }
@@ -199,7 +206,8 @@
   async function ghPutFile(path, u8) {
     const r = await fetch(apiBase + path, { method: 'PUT', headers: { ...hdr(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: 'Add photo', content: bytesToB64(u8), branch: CFG.branch }) });
-    if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? 'Token rejected' : 'GitHub ' + r.status);
+    if (r.status === 401 || r.status === 403 || r.status === 404) { const e = authErr(r.status); S.authWhy = e.why; throw new Error(e.why); }
+    if (!r.ok) throw new Error('GitHub ' + r.status);
   }
   async function ghDeleteFile(path) {
     const m = await fetch(`${apiBase}${path}?ref=${CFG.branch}&t=${Date.now()}`, { headers: hdr(), cache: 'no-store' });
@@ -315,8 +323,9 @@
         S.sha = g ? g.sha : undefined;
       }
       S.sha = await withLock(() => ghPut(text, S.sha));
-      S.loaded = normEnv(text); S.dirty = false; setSave('saved');
+      S.loaded = normEnv(text); S.dirty = false; S.authWhy = ''; setSave('saved');
     } catch (e) {
+      if (e.auth) S.authWhy = e.why;
       setSave(e.conflict ? 'conflict' : e.auth ? 'auth' : navigator.onLine ? 'error' : 'offline');
       if (e.conflict && !conflictWarned) { conflictWarned = true; toast('Another device saved newer changes, so nothing was overwritten. Tap “Changed elsewhere” at the top to load them.', { kind: 'bad', ms: 10000 }); }
       if (!e.conflict && !e.auth) { clearTimeout(retryTimer); retryTimer = setTimeout(() => { if (S.dirty) save(); }, 20000); } // try again shortly
@@ -1874,7 +1883,9 @@
   function viewSettings(main) {
     main.innerHTML = `<h2>Settings</h2>
       <div class="panel help"><h3>Saving to GitHub</h3>
-        <p>${tok() ? '<span class="ok">✓ A token is saved on this device.</span>' : '<b class="neg">No token on this device — changes are not being saved.</b>'}</p>
+        <p>${!tok() ? '<b class="neg">No token on this device — changes are not being saved.</b>'
+          : S.authWhy ? `<b class="neg">⚠ A token is saved on this device, but GitHub rejected it.</b></p><p class="tokwhy">${esc(S.authWhy)} Then paste the new or updated token below and press Save token.`
+          : '<span class="ok">✓ A token is saved on this device and is working.</span>'}</p>
         <div class="bar"><input class="grow" id="tok" type="password" placeholder="github_pat_…" autocomplete="off">
           <button class="btn small" id="tok-save">Save token</button>
           ${tok() ? '<button class="btn ghost small" id="tok-clear">Remove</button>' : ''}</div>
@@ -1958,19 +1969,28 @@
     if (!row) { const dc = t.closest('[data-day]'); if (dc) { S.calDay = dc.dataset.day; render(); return; } }
     if (row && !t.closest('select') && !t.closest('a') && !t.closest('#dlg')) { openEdit(row.dataset.id); return; }
     if (t.id === 'tok-save') {
-      const v = $('#tok').value.trim(); if (!v) return;
+      const v = $('#tok').value.replace(/\s+/g, '');   // phones can add spaces or line breaks when pasting
+      if (!v) return;
+      if (!/^(github_pat_|ghp_)/.test(v)) { $('#tok-msg').textContent = 'That does not look like a GitHub token. It should start with github_pat_.'; return; }
+      const prev = tok();
       try { localStorage.setItem('gcj_token', v); } catch { /* ignore */ }
-      $('#tok-msg').textContent = 'Checking…';
+      $('#tok-msg').className = 'muted small'; $('#tok-msg').textContent = 'Checking with GitHub…';
+      S.authWhy = '';
       try {
         const g = await ghGet();
         if (!g) { S.sha = undefined; S.dirty = true; await save(); }
-        else if (normEnv(g.text) === S.loaded) { S.sha = g.sha; if (S.dirty) await save(); else setSave('saved'); }
+        else if (normEnv(g.text) === S.loaded) { S.sha = g.sha; S.dirty = true; await save(); }
         else if (!S.dirty) {
-          try { await adoptRemote(g); setSave('saved'); toast('Token saved. Loaded the latest data from your other devices.'); }
-          catch (e2) { toast(e2.rekeyed ? 'Token saved. Your login was changed on another device. Lock and log in again with the new username and password.' : 'Token saved, but the latest data could not be read.', { kind: 'bad', ms: 9000 }); }
-        } else { S.sha = null; setSave('conflict'); toast('Token saved. Another device has newer changes than this one, so nothing was overwritten. Tap “Changed elsewhere” to load them.', { kind: 'bad', ms: 10000 }); }
-        render();
-      } catch { $('#tok-msg').textContent = 'That token did not work. Check it has Contents read/write on momscookies.'; }
+          try { await adoptRemote(g); S.dirty = true; await save(); toast('Loaded the latest data from your other devices.'); }
+          catch (e2) { toast(e2.rekeyed ? 'Your login was changed on another device. Lock and log in again with the new username and password.' : 'The latest data could not be read.', { kind: 'bad', ms: 9000 }); }
+        } else { S.sha = null; setSave('conflict'); toast('Another device has newer changes than this one, so nothing was overwritten. Tap “Changed elsewhere” to load them.', { kind: 'bad', ms: 10000 }); }
+      } catch (e) {
+        if (!S.authWhy) S.authWhy = e.status ? AUTH_WHY[e.status] : 'GitHub could not be reached. Check your internet connection and try again.';
+        setSave(e.status ? 'auth' : 'error');
+      }
+      if (S.authWhy && prev && prev !== v) { try { localStorage.setItem('gcj_token', prev); } catch { /* ignore */ } } // keep the old one if the new one fails
+      if (!S.authWhy && $('#savestate').textContent.includes('Saved')) toast('✓ Token works. Your changes are saving to GitHub.');
+      render();
       return;
     }
     if (t.id === 'tok-clear') { try { localStorage.removeItem('gcj_token'); } catch { /* ignore */ } setSave('local'); render(); return; }
