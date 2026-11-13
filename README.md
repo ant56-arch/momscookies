@@ -9,14 +9,14 @@ Static site (no build step) for GitHub Pages.
 `data/site.json`: `pricing.perCookie` (default 4.35), `occasions`, `about`, `phone`, `location`.
 
 ## Owner portal
-Data is stored **encrypted** in `data/portal.enc.json` (AES-256-GCM; key derived from your username+password with PBKDF2). It is encrypted/decrypted only in your browser and saved to GitHub through the API, so it syncs across devices.
+Data is stored **encrypted** (AES-256-GCM; key derived from your username+password with PBKDF2) in the **private** repository named by `dataRepo` in `data/site.json` (`momscookies-data`): `portal.enc.json` and `photos/*.bin`. It is encrypted/decrypted only in your browser and saved to GitHub through the API, so it syncs across devices. Without `dataRepo`, it is kept in this repo as `data/portal.enc.json` (older setup); the first login with a token after `dataRepo` is set moves it to the private repo automatically and deletes the public copy.
 
 **First time:** open the site home page → choose username + long password → import your `.xlsx` (parsed in your browser, never uploaded) → paste a GitHub token.
-**New device:** log in, then add the token in Settings. The token is stored on that device encrypted with your password, so other pages on ant56-arch.github.io cannot use it.
+**New device:** log in and paste your GitHub token once (the login asks for it). The token is stored on that device encrypted with your password, so other pages on ant56-arch.github.io cannot use it.
 
-Token: GitHub → Settings → Developer settings → Fine-grained tokens → only repo `momscookies` → Contents: Read and write.
+Token: GitHub → Settings → Developer settings → Fine-grained tokens → repos `momscookies` **and** `momscookies-data` → Contents: Read and write.
 
-**Photos:** resized in your browser, encrypted with the same key, and saved as `data/photos/*.bin` through the GitHub API (so a token is needed to upload). Photo details (caption, occasion, linked order) live in the encrypted portal data. Deleting a photo removes its files.
+**Photos:** resized in your browser, encrypted with the same key, and saved as `photos/*.bin` in the private data repo through the GitHub API (so a token is needed to upload). Photo details (caption, occasion, linked order) live in the encrypted portal data. Deleting a photo removes its files.
 
 **App features:** installable (`manifest.webmanifest`, `icons/`), offline fallback via `sw.js` (network first, cache only when offline), Auto/Light/Dark theme, toasts with Undo, Back-button navigation (`#orders`, `#calendar`, ...), keyboard shortcuts (`/` search, `N` new order).
 
@@ -30,7 +30,7 @@ python3 -m http.server 8000
 ```
 
 ## Security
-- Orders, customers and photos are encrypted in the browser (AES-256-GCM, PBKDF2-SHA256 600,000 rounds). GitHub only ever holds scrambled data.
+- Orders, customers and photos are encrypted in the browser (AES-256-GCM, PBKDF2-SHA256 600,000 rounds), and stored in a private repository. GitHub only ever holds scrambled data.
 - The GitHub token is kept encrypted with your login key on each device and only unlocked in memory after login.
 - Saves are committed as "Cookie Jar portal", not your personal email.
 - Auto-lock after inactivity (default 15 minutes; Settings → Security).

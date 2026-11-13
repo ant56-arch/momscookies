@@ -3,6 +3,12 @@
 
   /* ---------- config & helpers ---------- */
   const CFG = { owner: 'ant56-arch', repo: 'momscookies', branch: 'main', path: 'data/portal.enc.json' };
+  // Where the encrypted data lives. "public" = inside this website's repository (anyone can download the
+  // scrambled file). "private" = a separate private repository named in data/site.json ("dataRepo").
+  const STORES = { public: { repo: 'momscookies', vault: 'data/portal.enc.json', photos: 'data/photos', branch: 'main' }, private: null };
+  let DATA = STORES.public;
+  const repoApi = (st) => `https://api.github.com/repos/${CFG.owner}/${st.repo}/contents/`;
+  const refQ = (st) => (st.branch ? `ref=${st.branch}&` : '');
   const STATUSES = ['Requested', 'Confirmed', 'Baking', 'Ready', 'Completed', 'Declined'];
   const OPEN = ['Requested', 'Confirmed', 'Baking', 'Ready'];
   const REF_SKIP = ['Enter Cookie Orders', 'Complete Orders', 'Cookie Order Data'];
@@ -133,13 +139,16 @@
 
   // Phone keyboards often capitalize the first letter or add a trailing space, so try the
   // likely variants. Only the exact credentials used at setup can decrypt, so this is as safe as one try.
-  async function openForgiving(env, user, pw) {
+  function credVariants(user, pw) {
     const u = user.trim();
     const users = [...new Set([u, u.toLowerCase(), u.charAt(0).toLowerCase() + u.slice(1), u.charAt(0).toUpperCase() + u.slice(1)])];
     const pws = [...new Set([pw, pw.trim()])];
+    const out = []; for (const uu of users) for (const pp of pws) out.push([uu, pp]); return out;
+  }
+  async function openForgiving(env, user, pw, first) {
     let last;
-    for (const uu of users) for (const pp of pws) {
-      try { await open(env, uu, pp); return; } catch (e) { last = e; }
+    for (const [uu, pp] of (first ? [first, ...credVariants(user, pw)] : credVariants(user, pw))) {
+      try { await open(env, uu, pp); return [uu, pp]; } catch (e) { last = e; }
     }
     throw last;
   }
@@ -147,64 +156,81 @@
   /* ---------- GitHub storage ---------- */
   // The GitHub token is stored on this device ENCRYPTED with your login key, so other pages on
   // ant56-arch.github.io (your other sites) cannot use it. It is only unlocked in memory after login.
-  let memToken = '';
+  let memToken = '', tokKey = null, tokSalt = null;
   const tok = () => memToken;
+  async function setTokKey(user, pw) { tokSalt = crypto.getRandomValues(new Uint8Array(16)); tokKey = await derive(user, pw, tokSalt, 600000); }
   async function storeToken(v) {
     memToken = v || '';
     try {
-      localStorage.removeItem('gcj_token');                       // never keep a readable copy
-      if (!memToken) { localStorage.removeItem('gcj_token_enc'); return; }
-      localStorage.setItem('gcj_token_enc', b64e(await encBytes(new TextEncoder().encode(memToken))));
+      localStorage.removeItem('gcj_token'); localStorage.removeItem('gcj_token_enc');   // older formats: never keep them
+      if (!memToken) { localStorage.removeItem('gcj_tok2'); return; }
+      if (!tokKey) return;
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, tokKey, new TextEncoder().encode(memToken)));
+      localStorage.setItem('gcj_tok2', JSON.stringify({ s: b64e(tokSalt), i: b64e(iv), d: b64e(ct) }));
     } catch { /* storage unavailable: token stays for this visit only */ }
   }
-  async function unlockToken() {
+  const storedTok2 = () => { try { return JSON.parse(localStorage.getItem('gcj_tok2') || 'null'); } catch { return null; } };
+  const hasStoredToken = () => { try { return !!(localStorage.getItem('gcj_tok2') || localStorage.getItem('gcj_token_enc') || localStorage.getItem('gcj_token')); } catch { return false; } };
+  async function readTok2(t, user, pw) {
+    const salt = b64d(t.s), key = await derive(user, pw, salt, 600000);
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64d(t.i) }, key, b64d(t.d));
+    return { token: new TextDecoder().decode(pt), key, salt };
+  }
+  async function unlockLegacyToken() {   // older versions: readable, or locked with the data key (needs the data open)
     try {
-      const legacy = localStorage.getItem('gcj_token');           // older versions stored it readable
-      if (legacy) { await storeToken(legacy); return; }
-      const e = localStorage.getItem('gcj_token_enc'); if (!e) return;
-      memToken = new TextDecoder().decode(await decBytes(b64d(e)));
-    } catch { memToken = ''; }                                     // saved under an older password: ask again
+      const legacy = localStorage.getItem('gcj_token'); if (legacy) return legacy;
+      const e = localStorage.getItem('gcj_token_enc'); if (!e) return '';
+      return new TextDecoder().decode(await decBytes(b64d(e)));
+    } catch { return ''; }
   }
-  const api = `https://api.github.com/repos/${CFG.owner}/${CFG.repo}/contents/${CFG.path}`;
   const hdr = () => ({ Authorization: `Bearer ${tok()}`, Accept: 'application/vnd.github+json' });
-  async function ghGet() {
-    const r = await fetch(`${api}?ref=${CFG.branch}&t=${Date.now()}`, { headers: hdr(), cache: 'no-store' });
-    if (r.status === 404) return null;
-    if (r.status === 401 || r.status === 403) throw authErr(r.status);
-    if (!r.ok) throw new Error('GitHub ' + r.status);
-    const j = await r.json();
-    if (!j.content) {
-      const rr = await fetch(`${api}?ref=${CFG.branch}&t=${Date.now()}`, { headers: { ...hdr(), Accept: 'application/vnd.github.raw+json' }, cache: 'no-store' });
-      if (!rr.ok) throw new Error('GitHub ' + rr.status);
-      return { sha: j.sha, text: await rr.text() };
-    }
-    return { sha: j.sha, text: atob(j.content.replace(/\n/g, '')) };
-  }
-  const AUTH_WHY = {
+  const authWhy = (status, repo) => ({
     401: 'GitHub says this token is expired or not valid, so you need a new one. Make it on GitHub the same way as before.',
     403: 'This token can read your data but is not allowed to save it. On GitHub, edit the token and set Contents to “Read and write”.',
-    404: 'This token does not include the momscookies repository. On GitHub, edit the token and add momscookies under Repository access.',
-  };
-  const authErr = (status) => Object.assign(new Error('auth'), { auth: true, status, why: AUTH_WHY[status] || 'GitHub refused this token.' });
-  const COMMITTER = { name: 'Cookie Jar portal', email: 'cookie-jar-portal@users.noreply.github.com' };
-  async function ghPut(text, sha) {
-    const body = { message: 'Update portal data', content: btoa(text), branch: CFG.branch, committer: COMMITTER, author: COMMITTER };
+    404: `This token does not include the ${repo} repository. On GitHub, edit the token and add ${repo} under Repository access.`,
+  })[status] || 'GitHub refused this token.';
+  const authErr = (status, repo = DATA.repo) => Object.assign(new Error('auth'), { auth: true, status, why: authWhy(status, repo) });
+  async function stGetMeta(st, path) {
+    const r = await fetch(`${repoApi(st)}${path}?${refQ(st)}t=${Date.now()}`, { headers: hdr(), cache: 'no-store' });
+    if (r.status === 404) return null;
+    if (r.status === 401 || r.status === 403) throw authErr(r.status, st.repo);
+    if (!r.ok) throw new Error('GitHub ' + r.status);
+    return r.json();
+  }
+  async function stGetRaw(st, path) {
+    const r = await fetch(`${repoApi(st)}${path}?${refQ(st)}t=${Date.now()}`, { headers: { ...hdr(), Accept: 'application/vnd.github.raw+json' }, cache: 'no-store' });
+    if (r.status === 404) return null;
+    if (r.status === 401 || r.status === 403) throw authErr(r.status, st.repo);
+    if (!r.ok) throw new Error('GitHub ' + r.status);
+    return new Uint8Array(await r.arrayBuffer());
+  }
+  async function stPut(st, path, b64, sha, message) {
+    const body = { message, content: b64, committer: COMMITTER, author: COMMITTER };
+    if (st.branch) body.branch = st.branch;
     if (sha) body.sha = sha;
-    const r = await fetch(api, { method: 'PUT', headers: { ...hdr(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const r = await fetch(repoApi(st) + path, { method: 'PUT', headers: { ...hdr(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (r.status === 409 || r.status === 422) throw Object.assign(new Error('conflict'), { conflict: true });
-    if (r.status === 401 || r.status === 403 || r.status === 404) throw authErr(r.status);
+    if (r.status === 401 || r.status === 403 || r.status === 404) throw authErr(r.status, st.repo);
     if (!r.ok) throw new Error('GitHub ' + r.status);
     return (await r.json()).content.sha;
   }
-  async function fetchEnvelope() {
-    if (tok()) {
-      try {
-        const g = await ghGet();
-        if (!g) return null;
-        S.sha = g.sha;
-        return JSON.parse(g.text);
-      } catch { /* fall back to the published copy */ }
-    }
+  async function stDelete(st, path, message) {
+    const m = await stGetMeta(st, path); if (!m) return;
+    const body = { message, sha: m.sha, committer: COMMITTER, author: COMMITTER };
+    if (st.branch) body.branch = st.branch;
+    const r = await fetch(repoApi(st) + path, { method: 'DELETE', headers: { ...hdr(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok && r.status !== 404) throw new Error('GitHub ' + r.status);
+  }
+  async function ghGet() {
+    const j = await stGetMeta(DATA, DATA.vault);
+    if (!j) return null;
+    if (!j.content) { const raw = await stGetRaw(DATA, DATA.vault); return { sha: j.sha, text: new TextDecoder().decode(raw) }; }
+    return { sha: j.sha, text: atob(j.content.replace(/\n/g, '')) };
+  }
+  const COMMITTER = { name: 'Cookie Jar portal', email: 'cookie-jar-portal@users.noreply.github.com' };
+  const ghPut = (text, sha) => stPut(DATA, DATA.vault, btoa(text), sha, 'Update portal data');
+  async function fetchPublicEnv() {   // the copy published with the website (public storage only)
     const r = await fetch('data/portal.enc.json', { cache: 'no-store' });
     if (!r.ok) return null;
     S.sha = null;
@@ -212,8 +238,6 @@
   }
 
   // ---------- photos: private, encrypted storage ----------
-  const PHOTO_DIR = 'data/photos';
-  const apiBase = `https://api.github.com/repos/${CFG.owner}/${CFG.repo}/contents/`;
   let ghChain = Promise.resolve();
   const withLock = (fn) => { const run = ghChain.then(fn); ghChain = run.catch(() => {}); return run; }; // GitHub needs writes one at a time
   function bytesToB64(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
@@ -224,31 +248,19 @@
   }
   const decBytes = async (u8) => new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: u8.slice(0, 12) }, S.key, u8.slice(12)));
   async function ghPutFile(path, u8) {
-    const r = await fetch(apiBase + path, { method: 'PUT', headers: { ...hdr(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: 'Add photo', content: bytesToB64(u8), branch: CFG.branch, committer: COMMITTER, author: COMMITTER }) });
-    if (r.status === 401 || r.status === 403 || r.status === 404) { const e = authErr(r.status); S.authWhy = e.why; throw new Error(e.why); }
-    if (!r.ok) throw new Error('GitHub ' + r.status);
+    try { await stPut(DATA, path, bytesToB64(u8), null, 'Add photo'); }
+    catch (e) { if (e.auth) { S.authWhy = e.why; throw new Error(e.why); } throw e; }
   }
-  async function ghDeleteFile(path) {
-    const m = await fetch(`${apiBase}${path}?ref=${CFG.branch}&t=${Date.now()}`, { headers: hdr(), cache: 'no-store' });
-    if (m.status === 404) return;
-    if (!m.ok) throw new Error('GitHub ' + m.status);
-    const { sha } = await m.json();
-    const r = await fetch(apiBase + path, { method: 'DELETE', headers: { ...hdr(), 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'Remove photo', sha, branch: CFG.branch, committer: COMMITTER, author: COMMITTER }) });
-    if (!r.ok && r.status !== 404) throw new Error('GitHub ' + r.status);
-  }
+  const ghDeleteFile = (path) => stDelete(DATA, path, 'Remove photo');
   const photoCache = new Map();
   function photoUrl(id, kind) {
     const key = id + kind;
     if (!photoCache.has(key)) {
       photoCache.set(key, (async () => {
-        const path = `${PHOTO_DIR}/${id}.${kind}.bin`;
+        const path = `${DATA.photos}/${id}.${kind}.bin`;
         let bytes;
-        if (tok()) {
-          const r = await fetch(`${apiBase}${path}?ref=${CFG.branch}&t=${Date.now()}`, { headers: { Authorization: `Bearer ${tok()}`, Accept: 'application/vnd.github.raw+json' }, cache: 'no-store' });
-          if (r.ok) bytes = new Uint8Array(await r.arrayBuffer());
-        }
-        if (!bytes) {
+        if (tok()) bytes = await stGetRaw(DATA, path).catch(() => null);
+        if (!bytes && DATA === STORES.public) {
           const r = await fetch(`${path}?t=${Date.now()}`, { cache: 'no-store' });
           if (!r.ok) throw new Error('missing');
           bytes = new Uint8Array(await r.arrayBuffer());
@@ -295,7 +307,7 @@
   }
   let rekeyWarned = false;
   async function refreshFromRemote() {
-    if (!S.vault || !tok() || S.dirty || saving || !navigator.onLine || document.querySelector('dialog[open]')) return;
+    if (!S.vault || !tok() || S.dirty || saving || migrating || !navigator.onLine || document.querySelector('dialog[open]')) return;
     try {
       const g = await ghGet();
       if (!g || g.sha === S.sha) return;
@@ -309,7 +321,49 @@
   }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFromRemote(); });
   setInterval(refreshFromRemote, 180000);
-  let conflictWarned = false;
+  let conflictWarned = false, migrating = false;
+  async function migrateToPrivate() {
+    const pub = STORES.public, priv = STORES.private;
+    if (!priv || !tok() || migrating) return;
+    migrating = true; setSave('saving');
+    const prev = { sha: S.sha, loaded: S.loaded }; let wrote = false;
+    toast('Moving your data to your private repository…', { ms: 4000 });
+    try {
+      if (await stGetMeta(priv, priv.vault)) {   // another device already moved it: use that copy, never overwrite
+        DATA = priv; S.sha = null; migrating = false; await refreshFromRemote(); return;
+      }
+      const cur = await stGetMeta(pub, pub.vault);   // make sure we move the newest version, not a stale copy
+      if (cur) {
+        const g = { sha: cur.sha, text: cur.content ? atob(cur.content.replace(/\n/g, '')) : new TextDecoder().decode(await stGetRaw(pub, pub.vault)) };
+        if (normEnv(g.text) !== S.loaded) {
+          if (S.dirty) throw new Error('another device has newer changes. Lock, log in again, and it will try again');
+          await adoptRemote(g);
+        }
+        S.sha = g.sha;
+      }
+      for (const ph of photos()) for (const k of ['f', 't']) {   // photos first (already encrypted, copied as-is)
+        const name = `${ph.id}.${k}.bin`;
+        if (await stGetMeta(priv, `${priv.photos}/${name}`)) continue;
+        const bytes = await stGetRaw(pub, `${pub.photos}/${name}`); if (!bytes) continue;
+        await withLock(() => stPut(priv, `${priv.photos}/${name}`, bytesToB64(bytes), null, 'Move photo to private storage'));
+      }
+      const text = await seal();
+      const sha = await withLock(() => stPut(priv, priv.vault, btoa(text), null, 'Move portal data to private storage'));
+      DATA = priv; S.sha = sha; S.loaded = normEnv(text); wrote = true;   // from here on the private copy is the real one
+      const g = await ghGet();
+      if (!g || normEnv(g.text) !== S.loaded) throw new Error('the new copy could not be checked');
+      for (const ph of photos()) for (const k of ['f', 't']) await withLock(() => stDelete(pub, `${pub.photos}/${ph.id}.${k}.bin`, 'Remove public photo copy')).catch(() => {});
+      await withLock(() => stDelete(pub, pub.vault, 'Remove public data copy (moved to private storage)'));
+      S.dirty = false; setSave('saved');
+      toast('✓ Your data now lives in your private repository. Nobody else can download it.', { ms: 9000 });
+      if (S.tab === 'settings') render();
+    } catch (e) {
+      if (!wrote) { DATA = pub; S.sha = prev.sha; S.loaded = prev.loaded; }
+      setSave(e && e.auth ? 'auth' : 'saved');
+      if (e && e.auth) S.authWhy = e.why;
+      toast(e && e.auth ? `Could not move your data yet. ${e.why}` : `Could not move your data yet (${(e && e.message) || 'unknown problem'}). It is still safe where it was, and the portal will try again next time you log in.`, { kind: 'bad', ms: 12000 });
+    } finally { migrating = false; if (S.dirty) save(); }
+  }
   let saving = false, again = false, timer = null, retryTimer = null;
   window.addEventListener('online', () => { if (S.vault && S.dirty) save(); else if (S.vault) setSave(tok() ? 'saved' : 'local'); });
   window.addEventListener('offline', () => { if (S.vault) setSave('offline'); });
@@ -332,6 +386,7 @@
   }
   async function save() {
     if (!tok()) { setSave('local'); return; }
+    if (migrating) { clearTimeout(timer); timer = setTimeout(save, 1500); return; }
     if (!navigator.onLine) { setSave('offline'); return; }
     if (saving) { again = true; return; }
     saving = true; setSave('saving');
@@ -425,14 +480,55 @@
   async function showGate() {
     const gate = $('#gate');
     gate.innerHTML = '<p class="muted">Loading…</p>';
-    try { S.site = await fetch('data/site.json').then((r) => r.json()); } catch { S.site = null; }
+    try { S.site = await fetch('data/site.json', { cache: 'no-store' }).then((r) => r.json()); } catch { S.site = null; }
+    if (S.site && S.site.dataRepo) {   // data lives in a private repository: always a login (a token unlocks it)
+      STORES.private = { repo: S.site.dataRepo, vault: 'portal.enc.json', photos: 'photos', branch: null };
+      loginForm(null); return;
+    }
     let env = null;
-    try { env = await fetchEnvelope(); } catch { /* treated as none */ }
+    try { env = await fetchPublicEnv(); } catch { /* treated as none */ }
     env ? loginForm(env) : setupForm();
   }
 
   const brandBlock = () => `<div class="gate-brand"><svg class="jar" aria-hidden="true"><use href="#i-jar"/></svg>
       <div class="brand-name">Gina's Cookie Jar</div><div class="muted">Owner portal</div></div>`;
+
+  const WRONG = 'That username and password did not match. Check capital letters and spaces. Tap “Show password” to see what you typed.';
+  async function doLogin(env, user, pw, typedToken) {
+    let token = typedToken, win = null;
+    const t2 = storedTok2();
+    if (!token && t2) {
+      for (const [u, p] of credVariants(user, pw)) {
+        try { const r = await readTok2(t2, u, p); token = r.token; tokKey = r.key; tokSalt = r.salt; win = [u, p]; break; } catch { /* next */ }
+      }
+    }
+    memToken = token || '';
+    let fromPublic = false;
+    if (STORES.private) {
+      DATA = STORES.private;
+      if (memToken) {
+        try { const g = await ghGet(); if (g) { env = JSON.parse(g.text); S.sha = g.sha; } }
+        catch (e) { if (e.auth) throw Object.assign(new Error(e.why), { showTok: true }); throw new Error('GitHub could not be reached. Check your internet connection and try again.'); }
+      }
+      if (!env) {   // not moved yet (or no token on this device): use the copy published with the website
+        DATA = STORES.public;
+        env = await fetchPublicEnv().catch(() => null);
+        fromPublic = !!env;
+      }
+      if (!env) {
+        if (t2 && !win && !typedToken) throw Object.assign(new Error(WRONG + ' If you changed your password on another device, also paste your GitHub token.'), { showTok: true });
+        throw Object.assign(new Error(memToken ? `Your data was not found in ${STORES.private.repo}. Check that your token includes that repository.` : 'Paste your GitHub token below to open your data on this device.'), { showTok: true });
+      }
+    }
+    let opened;
+    try { opened = await openForgiving(env, user, pw, win); }
+    catch { throw Object.assign(new Error(WRONG), { showTok: false }); }
+    if (!memToken) memToken = await unlockLegacyToken();
+    if (!tokKey || !win || win[0] !== opened[0] || win[1] !== opened[1]) await setTokKey(opened[0], opened[1]);
+    if (memToken) await storeToken(memToken);   // (re)lock the token with this login
+    else { try { localStorage.removeItem('gcj_token_enc'); } catch { /* ignore */ } }
+    return { fromPublic };
+  }
 
   function loginForm(env) {
     $('#gate').innerHTML = `<form id="lf" class="gate-card">${brandBlock()}
@@ -440,6 +536,7 @@
       <label>Username<input id="u" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
       <label>Password<input id="p" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
       <label class="check showpw"><input type="checkbox" id="showpw"> Show password</label>
+      ${STORES.private ? `<label id="tokrow"${hasStoredToken() ? ' hidden' : ''}>GitHub token <span class="muted small">(only needed the first time on this device)</span><input id="t2" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="github_pat_…"></label>` : ''}
       <button class="btn full" type="submit" id="unlock">Unlock</button>
       <div class="err" id="err" role="alert"></div>
       <p class="muted small">Your data is encrypted; it's only decrypted in this browser.</p></form>`;
@@ -451,16 +548,18 @@
       $('#err').textContent = '';
       btn.disabled = true; btn.textContent = 'Checking…';
       await new Promise((r) => setTimeout(r, 30)); // let the button repaint before the heavy work
-      try { await openForgiving(env, $('#u').value, $('#p').value); }
-      catch {
+      let result;
+      try { result = await doLogin(env, $('#u').value, $('#p').value, (($('#t2') || {}).value || '').replace(/\s+/g, '')); }
+      catch (ex) {
         btn.disabled = false; btn.textContent = 'Unlock';
-        $('#err').textContent = 'That username and password did not match. Check capital letters and spaces. Tap “Show password” to see what you typed.';
+        $('#err').textContent = ex.message || 'Something went wrong. Try again.';
+        if (ex.showTok && $('#tokrow')) $('#tokrow').hidden = false;
         return;
       }
-      await unlockToken();
       try { if (sessionStorage.getItem('gcj_locked')) sessionStorage.removeItem('gcj_locked'); } catch { /* ignore */ }
       enterApp(tok() ? 'saved' : 'local');
-      if (tok()) refreshFromRemote();   // the published copy can lag a little: pick up anything newer
+      if (result.fromPublic && STORES.private && tok()) migrateToPrivate();
+      else if (tok()) refreshFromRemote();   // pick up anything newer than the copy we opened
     });
   }
 
@@ -487,7 +586,9 @@
         S.salt = crypto.getRandomValues(new Uint8Array(16));
         S.key = await derive($('#u').value.trim(), $('#p').value, S.salt, S.iter);
         const t = $('#t').value.trim();
-        if (t) await storeToken(t.replace(/\s+/g, '')); else await unlockToken();   // keep (and lock) a token this device already had
+        await setTokKey($('#u').value.trim(), $('#p').value);
+        const tt = t ? t.replace(/\s+/g, '') : await unlockLegacyToken();   // keep (and lock) a token this device already had
+        if (tt) await storeToken(tt);
         S.sha = null; S.dirty = true;
         enterApp(tok() ? 'dirty' : 'local');
         if (tok()) save();
@@ -1408,8 +1509,8 @@
           const id = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
           const fb = await encBytes(new Uint8Array(await full.blob.arrayBuffer())), tb = await encBytes(new Uint8Array(await thumb.blob.arrayBuffer()));
           st.textContent = 'Uploading…';
-          await withLock(() => ghPutFile(`${PHOTO_DIR}/${id}.f.bin`, fb));
-          await withLock(() => ghPutFile(`${PHOTO_DIR}/${id}.t.bin`, tb));
+          await withLock(() => ghPutFile(`${DATA.photos}/${id}.f.bin`, fb));
+          await withLock(() => ghPutFile(`${DATA.photos}/${id}.t.bin`, tb));
           photoCache.set(id + 'f', Promise.resolve(URL.createObjectURL(full.blob)));
           photoCache.set(id + 't', Promise.resolve(URL.createObjectURL(thumb.blob)));
           photos().push({ id, kind, orderId, occasion, caption: String(fd.get('caption') || '').trim(), date: isoDate(new Date(f.lastModified || Date.now())), w: full.w, h: full.h, added: todayISO() });
@@ -1472,7 +1573,7 @@
         if (!confirm('Delete this photo? This cannot be undone.')) return;
         const id = ph.id;
         S.vault.photos = photos().filter((x) => x.id !== id); ids.splice(i, 1); touch();
-        if (tok()) withLock(() => ghDeleteFile(`${PHOTO_DIR}/${id}.f.bin`)).then(() => withLock(() => ghDeleteFile(`${PHOTO_DIR}/${id}.t.bin`))).catch(() => {});
+        if (tok()) withLock(() => ghDeleteFile(`${DATA.photos}/${id}.f.bin`)).then(() => withLock(() => ghDeleteFile(`${DATA.photos}/${id}.t.bin`))).catch(() => {});
         photoCache.delete(id + 'f'); photoCache.delete(id + 't');
         if (!ids.length) { dlg.close(); return; }
         i = Math.min(i, ids.length - 1); draw();
@@ -1931,6 +2032,7 @@
         <label class="lockrow">Lock automatically after
           <select id="autolock">${[[5, '5 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour'], [0, 'Never']].map(([v, l]) => `<option value="${v}"${autoLockMins() === v ? ' selected' : ''}>${l} of no use</option>`).join('')}</select></label>
         <ul class="facts" style="margin-top:12px">
+          <li>${DATA === STORES.private ? `Your data is stored in your <b>private</b> repository <b>${esc(DATA.repo)}</b>. Nobody else can download it.` : STORES.private ? `Your data will move to your private repository <b>${esc(STORES.private.repo)}</b> the next time it can save.` : 'Your data is stored encrypted in the website repository.'}</li>
           <li>Your GitHub token is stored on this device <b>encrypted with your password</b>, so your other websites cannot use it.</li>
           <li>Saves to GitHub are labeled <b>Cookie Jar portal</b>, not with your email.</li>
           <li>This page only runs its own code. Outside scripts are blocked.</li>
@@ -2008,6 +2110,11 @@
       await storeToken(v);
       $('#tok-msg').className = 'muted small'; $('#tok-msg').textContent = 'Checking with GitHub…';
       S.authWhy = '';
+      if (STORES.private && DATA === STORES.public) {   // first token on this device: move the data to the private repository
+        await migrateToPrivate();
+        if (S.authWhy && prev && prev !== v) await storeToken(prev);
+        render(); return;
+      }
       try {
         const g = await ghGet();
         if (!g) { S.sha = undefined; S.dirty = true; await save(); }
@@ -2017,7 +2124,7 @@
           catch (e2) { toast(e2.rekeyed ? 'Your login was changed on another device. Lock and log in again with the new username and password.' : 'The latest data could not be read.', { kind: 'bad', ms: 9000 }); }
         } else { S.sha = null; setSave('conflict'); toast('Another device has newer changes than this one, so nothing was overwritten. Tap “Changed elsewhere” to load them.', { kind: 'bad', ms: 10000 }); }
       } catch (e) {
-        if (!S.authWhy) S.authWhy = e.status ? AUTH_WHY[e.status] : 'GitHub could not be reached. Check your internet connection and try again.';
+        if (!S.authWhy) S.authWhy = e.status ? authWhy(e.status, DATA.repo) : 'GitHub could not be reached. Check your internet connection and try again.';
         setSave(e.status ? 'auth' : 'error');
       }
       if (S.authWhy && prev && prev !== v) await storeToken(prev); // keep the old one if the new one fails
@@ -2031,7 +2138,7 @@
       if (!u || p.length < 12) { $('#pw-msg').textContent = 'Enter a username and a password of 12+ characters.'; return; }
       S.salt = crypto.getRandomValues(new Uint8Array(16));
       S.key = await derive(u, p, S.salt, S.iter);
-      if (memToken) await storeToken(memToken);   // re-lock the token with the new password
+      await setTokKey(u, p); if (memToken) await storeToken(memToken);   // re-lock the token with the new password
       touch(); $('#pw-msg').textContent = 'Changed. Use the new login next time.'; $('#np').value = '';
       return;
     }
@@ -2092,7 +2199,7 @@
     if (!S.vault || !mins || Date.now() - lastActive < mins * 60000) return;
     if (S.dirty) { if (tok() && navigator.onLine && !saving) await save(); if (S.dirty) return; }   // never lose unsaved work
     try { sessionStorage.setItem('gcj_locked', String(mins)); } catch { /* ignore */ }
-    memToken = ''; S.vault = null; S.key = null; location.reload();
+    memToken = ''; tokKey = null; S.vault = null; S.key = null; location.reload();
   }
   setInterval(checkAutoLock, 30000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkAutoLock(); });

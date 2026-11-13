@@ -19,15 +19,46 @@
     "metallicPerCookie": 0.5
   },
   "occasions": [
-    {"name": "Birthday", "emoji": "🎂"},
-    {"name": "Graduation", "emoji": "🎓"},
-    {"name": "Baby Shower", "emoji": "🍼"},
-    {"name": "Bridal / Bachelorette", "emoji": "💍"},
-    {"name": "Football / Sports", "emoji": "🏈"},
-    {"name": "Thanksgiving", "emoji": "🦃"},
-    {"name": "Christmas", "emoji": "🎄"},
-    {"name": "Easter", "emoji": "🐣"},
-    {"name": "Valentine's", "emoji": "💝"},
-    {"name": "Other event", "emoji": "🎉"}
-  ]
+    {
+      "name": "Birthday",
+      "emoji": "🎂"
+    },
+    {
+      "name": "Graduation",
+      "emoji": "🎓"
+    },
+    {
+      "name": "Baby Shower",
+      "emoji": "🍼"
+    },
+    {
+      "name": "Bridal / Bachelorette",
+      "emoji": "💍"
+    },
+    {
+      "name": "Football / Sports",
+      "emoji": "🏈"
+    },
+    {
+      "name": "Thanksgiving",
+      "emoji": "🦃"
+    },
+    {
+      "name": "Christmas",
+      "emoji": "🎄"
+    },
+    {
+      "name": "Easter",
+      "emoji": "🐣"
+    },
+    {
+      "name": "Valentine's",
+      "emoji": "💝"
+    },
+    {
+      "name": "Other event",
+      "emoji": "🎉"
+    }
+  ],
+  "dataRepo": "momscookies-data"
 }
